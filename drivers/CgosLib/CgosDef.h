@@ -39,7 +39,8 @@
 //***************************************************************************
 
 // just to have an option
-#ifdef DEF_WCHAR_T
+//#ifdef DEF_WCHAR_T
+#ifndef wchar_t
 #define wchar_t short
 #endif
 

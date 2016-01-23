@@ -21,68 +21,67 @@
 #include <linux/timer.h>
 #include <linux/interrupt.h>
 
-unsigned short lg_out_data[MAX_LG_BUFFER];
-unsigned char  diode_data[MAX_DIODE_BUFFER];
-unsigned short diode_word[MAX_DIODE_BUFFER];
-long  lg_out_data_index = 0;
-long  lg_out_data_start = 0;
-long  lg_out_data_end   = 0;
-long  lg_out_data_max   = 0;
-long  lg_in_data_index = 0;
-long  lg_in_data_end   = 0;
-long  lg_move = 0;
-long  lg_trigger = 0;
-long  lg_qc_flag = 0;
-long  lg_qc_counter = 0;
-long  lg_hw_flag = 0;
-long  lg_hw_trigger = 0;
-long  lg_roi_test   = 0;
-long  lg_roi_dwell  = 0;
-long  lg_roi_on     = 0;
-long  lg_roi_del    = 0;
-long  lg_roi_first  = 0;
-long  lg_roi_search = 0;
-long  lg_debounce  = 0;
-long  lg_hit       = 0;
-long  lg_trig_flag = 0;
-long  lg_step_neg  = 0;
-long  lg_index_avg = 0;
-long  lg_pulsemodeflag   = 0;
-long  lg_pulsecounter    = 0;
-long  lg_pulseonvalue    = 0;
-long  lg_pulseoffvalue   = 0;
+// Master structure for laserguide device
+struct lg_devdata *p_lg_devdata;
+struct class *lg_classp;
+static dev_t lg_number;
 
-unsigned long  lg_num_points = 0;
+uint16_t lg_out_data[MAX_LG_BUFFER];
+uint8_t  diode_data[MAX_DIODE_BUFFER];
+uint16_t diode_word[MAX_DIODE_BUFFER];
+int  lg_out_data_index = 0;
+int  lg_out_data_start = 0;
+int  lg_out_data_end   = 0;
+int  lg_out_data_max   = 0;
+int  lg_in_data_index = 0;
+int  lg_in_data_end   = 0;
+int  lg_move = 0;
+int  lg_trigger = 0;
+int  lg_qc_flag = 0;
+int  lg_qc_counter = 0;
+int  lg_hw_flag = 0;
+int  lg_hw_trigger = 0;
+int  lg_roi_test   = 0;
+int  lg_roi_dwell  = 0;
+int  lg_roi_on     = 0;
+int  lg_roi_del    = 0;
+int  lg_roi_first  = 0;
+int  lg_roi_search = 0;
+int  lg_debounce  = 0;
+int  lg_hit       = 0;
+int  lg_trig_flag = 0;
+int  lg_step_neg  = 0;
+int  lg_index_avg = 0;
+int  lg_pulsemodeflag   = 0;
+int  lg_pulsecounter    = 0;
+int  lg_pulseonvalue    = 0;
+int  lg_pulseoffvalue   = 0;
 
-unsigned long  lg_x_save = 0;
-unsigned long  lg_y_save = 0;
-unsigned long  lg_x_delta = 0;
-unsigned long  lg_y_delta = 0;
+uint32_t  lg_num_points = 0;
 
-unsigned short  lg_xhi_offset = 0;
-unsigned short  lg_yhi_offset = 0;
+uint32_t  lg_x_save = 0;
+uint32_t  lg_y_save = 0;
+uint32_t  lg_x_delta = 0;
+uint32_t  lg_y_delta = 0;
 
-unsigned char lg_threshold = 0;
+uint16_t  lg_xhi_offset = 0;
+uint16_t  lg_yhi_offset = 0;
+
+uint8_t   lg_threshold = 0;
 static int lg_out_data_size = 0;
 static int lg_first_flag;
 static int lg_shutter_open;
 
-unsigned char lg_optic_store = 0;
+uint8_t lg_optic_store = 0;
 
 struct wait_queue * lg_wait = NULL;
 static void lg_timeout(unsigned long data);
-static struct timer_list lg_timer =
-	TIMER_INITIALIZER(lg_timeout , 0, 0);
 
 int   lg_dark_search;
 
-// Defines used by event timer
-#define UARTPORT 0x3F8
-#define UCOUNT   500
+// Defines used device
+#define DEVICE_NAME "laser"
 
-  /* note that everything must be written as "char"                */
-  /* in one BIG write  (unless some sort of "seek" is implemented) */
-/*
 static int lg_write(struct inode * inode, struct file * file,
   const char * buffer, int count)
  */
@@ -92,10 +91,10 @@ ssize_t lg_write( struct file * file
                 , loff_t * f_pos
                 )
 {
-
+  
   if (count<=0) return -EINVAL;
-  if (count > MAX_LG_BUFFER) return -ENOMEM;
-  if(copy_from_user((void *)lg_out_data, (void *)buffer, (unsigned long)count))
+  if (count > sizeof(lg_out_data)) return -ENOMEM;
+  if(copy_from_user((char *)&lg_out_data[0], buffer, count))
     return -EFAULT;
 
   lg_out_data_size = count;
@@ -103,6 +102,11 @@ ssize_t lg_write( struct file * file
   lg_out_data_end = lg_out_data_size / 2;
   lg_out_data_max = lg_out_data_size / 2;
   lg_out_data_index = 0;
+  printk("\nAGS-LG:Got WRITE message from user, %lx bytes\n",count);
+#if 0
+  for (i = 0; i < count; i++)
+    printk("data[%x] = %x\n",i, lg_out_data[i]);
+#endif
   return count;
 }
 
@@ -119,6 +123,8 @@ ssize_t lg_read( struct file * file
   int minor = MINOR(inode->i_rdev);
  */
 
+  printk("\nAGS-LG:Got READ message from user, %lX bytes, lg_move %X",count, lg_move);
+
   if (count<=0) return -EINVAL;
   if (count > MAX_DIODE_BUFFER) return -ENOMEM;
   if( lg_move == 2 ) {
@@ -128,8 +134,10 @@ ssize_t lg_read( struct file * file
   if( lg_move <= 1 ) return -EBUSY;
   if( lg_move != 3 ) return -EIO; 
 
+  printk("\nAGS-LG:Got READ message from user, %X bytes",(int)count);
+
   /* sensor scan has been done */
-  if (copy_to_user((void *)buffer, (void *)diode_word, (unsigned long)count))
+  if (copy_to_user((void *)buffer, (void *)diode_word, (uint32_t)count))
     return -EFAULT;    
   lg_move = 0;    /* reset to IDLE state */
   return count;
@@ -137,18 +145,24 @@ ssize_t lg_read( struct file * file
 
   /* the messy catch-all driver routine to do all sorts of things */
 static long lg_ioctl(struct file *file, unsigned int cmd,
- unsigned long param )
+ unsigned long arg )
 {
   union lg_info local_info;
   /* int retval; */
-  unsigned short xlo,xhi,ylo,yhi;
-  unsigned char lo;
-  int timer_expiration=msecs_to_jiffies(1);
+  uint16_t xlo,xhi,ylo,yhi;
+  uint8_t lo;
+  int timer_expiration=usecs_to_jiffies(100);
+  void __user *argp = (void __user *)arg;
 
   if( _IOC_DIR(cmd) & _IOC_WRITE ) {
-    copy_from_user(&local_info, (void *)param, sizeof(union lg_info) );
+    if (copy_from_user(&local_info, argp, sizeof(union lg_info) ))
+      {
+	del_timer(&lg_timer);
+	return EFAULT;
+      }
   }
   del_timer(&lg_timer);
+  printk("\nAGS-LG:Got IOCTL message %x from user",cmd);
   
   switch (cmd) {
      case LGSTOP:
@@ -164,12 +178,14 @@ static long lg_ioctl(struct file *file, unsigned int cmd,
        lg_qc_flag = 0;   /* set quick check flag to "false" */
        lg_move = 1;
        lg_out_data_index = 0;  /* reset from beginning */
-       return 0;
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 10       return 0;
      case LGHWFLAGON:
        // lg_hw_flag = 1;   /* set hardware flag to "true" */
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 10       return 0;
        return 0;
      case LGHWFLAGOFF:
        // lg_hw_flag = 0;   /* set hardware flag to "false" */
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 10       return 0;
        return 0;
      case LGHWTRIGGER:
        lg_hw_trigger = 1;   /* prime hardware trigger */
@@ -212,16 +228,20 @@ static long lg_ioctl(struct file *file, unsigned int cmd,
                 /* outb( 0x80,0x380 );  */
        lg_x_save = local_info.ptns.xpos; 
        lg_y_save = local_info.ptns.ypos; 
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 1msec
        return 0;
      case LGLOADWRITENUMBER:
        lg_out_data_end   = local_info.num_points * 4;
        lg_out_data_max   = local_info.num_points * 4;
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 1msec
        return 0;
      case LGLOADREADNUMBER:
        lg_in_data_end   = local_info.num_points;
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 1msec
        return 0;
      case LGLOADTHRESH:
        lg_threshold = local_info.threshold;
+       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 1msec
        return 0;
      case LGGETANGLE:
        local_info.ptns.xpos = lg_x_save; 
@@ -284,31 +304,18 @@ static long lg_ioctl(struct file *file, unsigned int cmd,
        lg_optic_store &= 0xFB;
        outb( lg_optic_store, LG_IO_OPTIC );
        break;
-     case LGGETBOARD:
-       // local_info.board_config = inb( LG_IO_BOARD );
-       if ( lg_hw_flag == 1 ) {
-           local_info.board_config = 1;
-       } else {
-           local_info.board_config = 0;
-       }
-       break;
-     case LGGETIP:
-       local_info.low_ip_octet = inb( LG_IO_TCPIP );
-       break;
      case LGFASTCLOCK:
-       timer_expiration = msecs_to_jiffies(1);    // timer expires in ~1 msec
-       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer to ~1msec
+       timer_expiration = usecs_to_jiffies(100);    // timer expires in ~100 usec
        break;
      case LGSLOWCLOCK:
-       timer_expiration = usecs_to_jiffies(local_info.clock_tick);    // timer expires in ~usecs
-       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer to ~1msec
+       timer_expiration = msecs_to_jiffies(10);    // timer expires in ~10 msec
        break;
      case LGSETCLOCK:
-       // TBD, NOT CORRECT THOUGH
+       timer_expiration = usecs_to_jiffies(11932 / (long)local_info.clock_tick);  // timer expires ~x usec as set by user
        break;
-             /* when a quick check is needed, this flag is set to non-zero */
-             /* LGDISPLAY  automatically sets this to zero  */
      case LGSETQCFLAG:
+       // When a quick check is needed, this flag is set to non-zero
+       // LGDISPLAY  automatically sets this to zero
         lg_qc_flag = local_info.qcFlag;
        break;
      case LGGETQCFLAG:
@@ -404,12 +411,20 @@ static long lg_ioctl(struct file *file, unsigned int cmd,
   }
 
   if( _IOC_DIR(cmd) & _IOC_READ ) {
-    copy_to_user((void *)param, &local_info, sizeof(union lg_info) );
+    if (copy_to_user(argp, &local_info, sizeof(union lg_info) ))
+      {
+	printk("\nAGS-LG:Error occurred for message %x from user",cmd);
+        return -EFAULT;
+      }
+    // Restart event timer
+    mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 1msec
     return 0;
   }
   else
-    return 0;
-
+    {
+      printk("\nAGS-LG:Returning from message %x from user",cmd);
+      return 0;
+    }
   return -EINVAL;
 }
 
@@ -426,15 +441,17 @@ int lg_release(struct inode *inode, struct file *file)
 static void lg_timeout(unsigned long data)
 {
   char time_lg_inbuff[8];
-  static unsigned short xlo, xhi, ylo, yhi;
-  static unsigned char lo;
-  static unsigned char b_optic;
-  unsigned char tg_find_val;
-  unsigned short lg_sum;
-  unsigned short lg_00x;
-  unsigned short lg_x00;
+  static uint16_t xlo, xhi, ylo, yhi;
+  static uint8_t lo;
+  static uint8_t b_optic;
+  uint8_t tg_find_val;
+  uint16_t lg_sum;
+  uint16_t lg_00x;
+  uint16_t lg_x00;
   int timer_expiration;
 
+  // Set timer-expiration to 100 usec default val
+  timer_expiration = usecs_to_jiffies(100);
   /*
    *  before anything else, check CHDR and, if need be,
    *  change shutter state
@@ -447,6 +464,7 @@ static void lg_timeout(unsigned long data)
 	{
 	  lg_optic_store |= 0x80;
 	  outb( lg_optic_store, LG_IO_OPTIC );
+	  printk("\nAGS-LG:Change shutter state close %X, addr %X",lg_optic_store, LG_IO_OPTIC);
 	}
       lg_shutter_open = 1;
     }
@@ -456,12 +474,10 @@ static void lg_timeout(unsigned long data)
 	{
 	  lg_optic_store &= 0x7F;
 	  outb(lg_optic_store, LG_IO_OPTIC);
+	  printk("\nAGS-LG:Change shutter state open %X, addr %X",lg_optic_store, LG_IO_OPTIC);
 	}
       lg_shutter_open = 0;
     }
-
-  // Set timer-expiration to 1msec
-  timer_expiration = msecs_to_jiffies(1);  //Start with 1000Hz (1msec expiration)
 
   /*
    *  laser pulse mode
@@ -492,6 +508,7 @@ static void lg_timeout(unsigned long data)
 	  outw(yhi, LG_IO_Y2);
 	  lo = (0xFF & xlo) | 0x80;               /* set strobe bit */
 	  outb( lo, LG_IO_X0 );
+	  printk("\nAGS-LG:Write out lo %X, xlo %X, xhi %X, ylo %X, yhi %X",lo, xlo, xhi, ylo, yhi);
 	}
       else if (lg_pulsecounter <= lg_pulseonvalue)
 	{
@@ -508,12 +525,13 @@ static void lg_timeout(unsigned long data)
 	  outw(yhi, LG_IO_Y2);
 	  lo = (0xFF & xlo) | 0x80;               /* set strobe bit */
 	  outb(lo, LG_IO_X0);
+	  printk("\nAGS-LG:Write out lo %X, xlo %X, xhi %X, ylo %X, yhi %X",lo, xlo, xhi, ylo, yhi);
 	}
     else
       {
 	lg_pulsecounter = 0;
       }
-      mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 1000Hz
+      mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, ~ 10 usec
       
       lg_first_flag = 1;  /* kludge to set flag */
       /* lg_optic_store = 0x40; */
@@ -522,7 +540,7 @@ static void lg_timeout(unsigned long data)
 
   if (lg_move == 1)
     {
-      del_timer(&lg_timer);
+      del_timer(&lg_timer);   // This stops the timer for us
       lg_out_data_index += 4;
       if (lg_out_data_index >= lg_out_data_end) lg_out_data_index = 0;
       xlo = lg_out_data[lg_out_data_index  ] & 0xFF7F;
@@ -536,8 +554,9 @@ static void lg_timeout(unsigned long data)
       outw(yhi, LG_IO_Y2);
       lo = (0xFF & xlo) | 0x80;               /* set strobe bit */
       outb(lo, LG_IO_X0);
-      lg_x_save = (((unsigned long)xhi) << 16) | (unsigned long)xlo;
-      lg_y_save = (((unsigned long)yhi) << 16) | (unsigned long)ylo;    
+      lg_x_save = (((uint32_t)xhi) << 16) | (uint32_t)xlo;
+      lg_y_save = (((uint32_t)yhi) << 16) | (uint32_t)ylo;    
+      printk("\nAGS-LG:Write out lo %X, xlo %X, xhi %X, ylo %X, yhi %X\n",lo, xlo, xhi, ylo, yhi);
 
       /* a negative lg_qc_counter will never do a quick check */
       if (lg_qc_counter > 0)
@@ -552,9 +571,10 @@ static void lg_timeout(unsigned long data)
 	  outb( lo, LG_IO_X0 );
 	  lo = 0x80;                              /* set strobe bit */
 	  outb( lo, LG_IO_X0 );
+	  printk("\nAGS-LG:Set strobe %X, addr %X",lo, LG_IO_X0);
 
 	  /* slow down clock to 10 millisec */
-	  timer_expiration = msecs_to_jiffies(10);  // 10msec expiration
+	  timer_expiration = msecs_to_jiffies(10);  // Set timer to 10msec expiration now
 	}
        mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, either ~1 or ~10 msec
     }
@@ -563,64 +583,81 @@ static void lg_timeout(unsigned long data)
       /* this is intended for searching */
       del_timer(&lg_timer);
 
-      if ( lg_dark_search == 1 )
-	xlo = (unsigned short)((lg_x_save) & 0xFF00);    // keep beam dark
-      else
+      if ( lg_in_data_index > 3 )
 	{
-	  // set unblank, unset strobe
-	  xlo = (unsigned short)((lg_x_save) & 0xFF7F);
-	  xlo |=  0x0040;
-	}
-      xhi = (unsigned short)((lg_x_save >> 16) & 0xFFFF);
-      ylo = (unsigned short)((lg_y_save      ) & 0xFFFF);
-      yhi = (unsigned short)((lg_y_save >> 16) & 0xFFFF);
-      /* NOTE: unblank bit disabled during search */
-      outw( xlo, LG_IO_X0 );
-      outw( xhi, LG_IO_X2 );
-      outw( ylo, LG_IO_Y0 );
-      outw( yhi, LG_IO_Y2 );
-      if ( lg_dark_search == 1 )
-	lo = (0xFF & xlo) | 0x80;    // set strobe bit, keep unblank unset
-      else
-	lo = (0xFF & xlo) | 0xC0;  // set strobe bit, keep unblank set
-      
-      outb( lo, LG_IO_X0 );
-      diode_data[lg_in_data_index] = inb( LG_IO_OPTIC );
-      lg_in_data_index++;   /* increment positions and index */
-      lg_x_save      += lg_x_delta;
-      lg_y_save      += lg_y_delta;
-      if( lg_in_data_index >= lg_in_data_end )
-	{
+	  /* stop everything and leave mark */
+	  diode_data[0] = 0xA5;
+	  diode_data[1] = 0x5A;
+	  diode_data[2] = 0xA5;
+	  diode_data[3] = 0x5A;
 	  lg_move = 3;
-	  timer_expiration = msecs_to_jiffies(10);   // timer will expire in ~ 10msec
+	  /* slow down clock to 10 millisec */
+	  timer_expiration = msecs_to_jiffies(10);  // Set timer to 10msec expiration now
 	  lg_dark_search = 0;
 	}
-      
-       mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, either ~1 or ~10 msec
+      else
+	{
+	  if ( lg_dark_search == 1 )
+	    xlo = (uint16_t)((lg_x_save) & 0xFF00);    // keep beam dark
+	  else
+	    {
+	      // set unblank, unset strobe
+	      xlo = (uint16_t)((lg_x_save) & 0xFF7F);
+	      xlo |=  0x0040;
+	    }
+	  xhi = (uint16_t)((lg_x_save >> 16) & 0xFFFF);
+	  ylo = (uint16_t)((lg_y_save      ) & 0xFFFF);
+	  yhi = (uint16_t)((lg_y_save >> 16) & 0xFFFF);
+	  /* NOTE: unblank bit disabled during search */
+	  outw( xlo, LG_IO_X0 );
+	  outw( xhi, LG_IO_X2 );
+	  outw( ylo, LG_IO_Y0 );
+	  outw( yhi, LG_IO_Y2 );
+	  if ( lg_dark_search == 1 )
+	    lo = (0xFF & xlo) | 0x80;    // set strobe bit, keep unblank unset
+	  else
+	    lo = (0xFF & xlo) | 0xC0;   // set strobe bit, keep unblank set
+	  outb( lo, LG_IO_X0 );
+	  printk("\nAGS-LG:Write out lo %X, xlo %X, xhi %X, ylo %X, yhi %X",lo, xlo, xhi, ylo, yhi);
+
+	  diode_data[lg_in_data_index] = inb( LG_IO_OPTIC );
+	  lg_in_data_index++;   /* increment positions and index */
+	  lg_x_save      += lg_x_delta;
+	  lg_y_save      += lg_y_delta;
+	  if( lg_in_data_index >= lg_in_data_end )
+	    {
+	      lg_move = 3;
+	      timer_expiration = msecs_to_jiffies(10);   // timer will expire in ~ 10msec
+	      lg_dark_search = 0;
+	    }
+	}
+      mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer, either ~1 or ~10 msec
     }
   else if ( lg_move == 2 )
     {
       /* this is intended for searching */
       del_timer(&lg_timer);
-
+      
       if ( lg_dark_search == 1 )
 	{
 	  /* keep beam dark */
-	  xlo = (unsigned short)((lg_x_save) & 0xFF00);
+	  xlo = (uint16_t)((lg_x_save) & 0xFF00);
 	}
       else
 	{
-	  xlo = (unsigned short)((lg_x_save) & 0xFF7F);
+	  xlo = (uint16_t)((lg_x_save) & 0xFF7F);
 	  xlo |=  0x0040;      /* set unblank, unset strobe */
 	}
-      xhi = (unsigned short)((lg_x_save >> 16) & 0xFFFF);
-      ylo = (unsigned short)((lg_y_save      ) & 0xFFFF);
-      yhi = (unsigned short)((lg_y_save >> 16) & 0xFFFF);
+      printk("\nAGS-LG:lg_x_save %X, lg_y_save %X\n",lg_x_save, lg_y_save);
+      xhi = (uint16_t)((lg_x_save >> 16) & 0xFFFF);
+      ylo = (uint16_t)((lg_y_save      ) & 0xFFFF);
+      yhi = (uint16_t)((lg_y_save >> 16) & 0xFFFF);
       /* NOTE: unblank bit disabled during search */
       outw( xlo, LG_IO_X0 );
       outw( xhi, LG_IO_X2 );
       outw( ylo, LG_IO_Y0 );
       outw( yhi, LG_IO_Y2 );
+      printk("\nAGS-LG: xlo %X, xhi %X, ylo %X, yhi %X\n",xlo, xhi, ylo, yhi);
       /* set strobe bit, keep unblank set */
       if ( lg_dark_search == 1 )
 	lo = 0x80;             // set strobe bit, keep unblank unset 
@@ -633,22 +670,26 @@ static void lg_timeout(unsigned long data)
       else
 	lo = 0x40;             // clear strobe bit, keep unblank set 
       outb( lo, LG_IO_X0 );
+      printk("\nAGS-LG:Write out lo %X, xlo %X, xhi %X, ylo %X, yhi %X",lo, xlo, xhi, ylo, yhi);
 
       // Read in data from target-find board
-	tg_find_val = inb(TFPORTRL);
-	time_lg_inbuff[1] = tg_find_val & 0xff;
-	tg_find_val = inb(TFPORTRH);
-	time_lg_inbuff[0] = tg_find_val & 0x03;
+      tg_find_val = inb(TFPORTRL);
+      time_lg_inbuff[1] = tg_find_val & 0xff;
+      printk("\nAGS-LG:Read TG-find data %X, addr %X",tg_find_val, TFPORTRL);
+      tg_find_val = inb(TFPORTRH);
+      time_lg_inbuff[0] = tg_find_val & 0x03;
+      printk("\nAGS-LG:Read TG-find data %X, addr %X",tg_find_val, TFPORTRH);
       
-	lg_00x = 0xff & time_lg_inbuff[1];
-	lg_x00 = 0xff & time_lg_inbuff[0];
-	lg_sum = lg_00x + lg_x00 * 0x100 ;
-
+      lg_00x = 0xff & time_lg_inbuff[1];
+      lg_x00 = 0xff & time_lg_inbuff[0];
+      lg_sum = lg_00x + lg_x00 * 0x100 ;
+      
 	diode_word[lg_in_data_index] = lg_sum;
 	if ( lg_sum < 0xFF )
 	  diode_data[lg_in_data_index] = lg_sum & 0xFF;
 	else
 	  diode_data[lg_in_data_index] = 0xFF;
+	printk("\nAGS-LG:Update diode_data %X at offset %X",lg_sum, lg_in_data_index);
 
 	lg_in_data_index++;   /* increment positions and index */
 	lg_x_save      += lg_x_delta;
@@ -660,6 +701,8 @@ static void lg_timeout(unsigned long data)
 	    lg_dark_search = 0;
 	  }
     }
+  printk("\nAGS-LG:lg-move operation %d, time-expiry %x", lg_move, timer_expiration);
+
   mod_timer(&lg_timer, jiffies + timer_expiration);  // Restart timer to either 1msec or 10msec
   return;   /* skip the rest of the routine */
 }
@@ -677,33 +720,44 @@ static int __init lg_init(void )
 {
    int eee;
 
-   eee = register_chrdev(LG_MAJOR,"laser",&lg_fops);
+   eee = register_chrdev(LG_MAJOR,DEVICE_NAME,&lg_fops);
 
    if ( eee ) {
-     printk("Laser Guide Controller error: %d Cannot register to major device %d!\n", eee, LG_MAJOR);
+     printk("\nAGS-LG:Laser Guide Controller error: %d Cannot register to major device %d!\n", eee, LG_MAJOR);
      return eee;
    }
 
-   request_region( LG_BASE, LASER_REGION, "laser" );
+   request_region( LG_BASE, LASER_REGION, DEVICE_NAME );
 
-         /* move to 0,0 position */
+   // move to 0,0 position
    outw( 0, LG_IO_X0 );
    outw( 0, LG_IO_X2 );
    outw( 0, LG_IO_Y0 );
    outw( 0, LG_IO_Y2 );
    outb( 0x80, LG_IO_X0 );
 
-   // Now set up the timer but don't start it yet.
-   lg_timer.expires = 0;
-   init_timer(&lg_timer);
+   // Set up device private data
+   p_lg_devdata = kzalloc(sizeof(struct lg_devdata), GFP_KERNEL);
+   if (p_lg_devdata == NULL)
+     return -ENOMEM;
+
+   // Bind device to our device private data struct
+   cdev_init(&p_lg_devdata->cdev, &lg_fops);
+   p_lg_devdata->cdev.owner = THIS_MODULE;
    
-   printk("Laser Guide Controller installed with major %d.\n", LG_MAJOR);
+   // Set up the timer but don't start it yet.
+   p_lg_devdata->lg_timer = TIMER_INITIALIZER(lg_timeout , 0, 0);
+   p_lg_devdata->lg_timer.expires = 0;
+   init_timer(&p_lg_devdata->lg_timer);
+   
+   printk("\nAGS-LG:Laser Guide Controller installed with major %d.\n", LG_MAJOR);
   return 0;
 }
 
 static void __exit lg_exit(void)
 {
 	unregister_chrdev(LG_MAJOR, "lg");
+	kfree(p_lg_devdata);
 	release_region(LG_BASE, LASER_REGION);
 }
 module_init(lg_init);

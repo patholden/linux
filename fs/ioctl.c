@@ -38,11 +38,10 @@ static long vfs_ioctl(struct file *filp, unsigned int cmd,
 	int error = -ENOTTY;
 
 	if (!filp->f_op->unlocked_ioctl)
-		goto out;
-
+	    goto out;
 	error = filp->f_op->unlocked_ioctl(filp, cmd, arg);
 	if (error == -ENOIOCTLCMD)
-		error = -ENOTTY;
+	error = -ENOTTY;
  out:
 	return error;
 }

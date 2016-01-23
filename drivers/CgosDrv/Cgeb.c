@@ -23,7 +23,8 @@
  */ 
 
 //***************************************************************************
-
+#include <linux/printk.h>
+#include <linux/platform_device.h>
 #include "CgosDrv.h"
 
 //***************************************************************************
@@ -331,6 +332,7 @@ unsigned int CgebOpenRaw(CGOS_DRV_BOARD *brd, unsigned char *pcur, unsigned char
   CGEB_BOARDINFO *pbi;
   CGEB_LO_DESC *loDesc;
   CGEB_HI_DESC *hiDesc=NULL;
+  unsigned char *lo_start;
   unsigned int hiStart=0xFFF00000;
   CGEB_STORAGEAREA_INFO *psto;
 
@@ -338,50 +340,60 @@ unsigned int CgebOpenRaw(CGOS_DRV_BOARD *brd, unsigned char *pcur, unsigned char
 
   if (!pend)
     cgeb->entry=pcur; // if pend is NULL then pcur is the entry function
-  else {
-    dbpf((TT("CGOS: Looking for CGEB lo desc between virt 0x%X and 0x%X\n"),pcur,pend));
+  else
+    {
+      dbpf((TT("CGOS: Looking for CGEB lo desc between virt 0x%X and 0x%X\n"),pcur,pend));
 
-    // look for the next CGEB descriptor
-    *ppnext=NULL;
-    pcur=CgebScanMem(pcur,pend,CGEB_LD_MAGIC);
+      // look for the next CGEB descriptor
+      *ppnext=NULL;
+      lo_start=CgebScanMem(pcur,pend,CGEB_LD_MAGIC);
 
-    if (!pcur) return FALSE; // nothing found
-    *ppnext=pcur+16; // next paragraph
+      if (!lo_start) return FALSE; // nothing found
+      *ppnext=lo_start+16; // next paragraph
 
-    dbpf((TT("CGOS: Found CGEB_LD_MAGIC\n")));
+      dbpf((TT("CGOS: Found CGEB_LD_MAGIC\n")));
+      printk("\n CGOS:  Found LD MAGIC phys %x, mapped %x",(unsigned int)pcur,(unsigned int)lo_start);
+    
+      loDesc=(CGEB_LO_DESC *)lo_start;
+      if (loDesc->size<sizeof(CGEB_LO_DESC)-sizeof(int)) return FALSE;
+      if (loDesc->size>=sizeof(CGEB_LO_DESC) && loDesc->hiDescPhysAddr)
+	hiStart=loDesc->hiDescPhysAddr;
 
-    loDesc=(CGEB_LO_DESC *)pcur;
-    if (loDesc->size<sizeof(CGEB_LO_DESC)-sizeof(int)) return FALSE;
-    if (loDesc->size>=sizeof(CGEB_LO_DESC) && loDesc->hiDescPhysAddr)
-      hiStart=loDesc->hiDescPhysAddr;
+      cgeb->hiDescLen=0xFFFFFFFF;
+      dbpf((TT("CGOS: Looking for CGEB hi desc between phys 0x%X and 0x%X\n"),hiStart,-1));
+      if (!hiStart)
+	{
+	  printk("\nBad CGOS address pcur %x, hiStart %x",(unsigned int)pcur,(unsigned int)hiStart);
+	  return FALSE;
+	}
+      cgeb->hiDescStart=(unsigned char *)OsaMapAddress(hiStart,cgeb->hiDescLen);
+      if (!cgeb->hiDescStart) return FALSE;
+      dbpf((TT("CGOS: Looking for CGEB hi desc between virt 0x%X and 0x%X\n"),cgeb->hiDescStart,cgeb->hiDescStart+cgeb->hiDescLen-1));
+      hiDesc=(CGEB_HI_DESC *)CgebScanMem(cgeb->hiDescStart,cgeb->hiDescStart+cgeb->hiDescLen-1,CGEB_HD_MAGIC);
+      if (!hiDesc) return FALSE;
 
-    cgeb->hiDescLen=(unsigned int)-(int)hiStart;
-    dbpf((TT("CGOS: Looking for CGEB hi desc between phys 0x%X and 0x%X\n"),hiStart,-1));
-    cgeb->hiDescStart=(unsigned char *)OsaMapAddress(hiStart,cgeb->hiDescLen);
-    if (!cgeb->hiDescStart) return FALSE;
-    dbpf((TT("CGOS: Looking for CGEB hi desc between virt 0x%X and 0x%X\n"),cgeb->hiDescStart,cgeb->hiDescStart+cgeb->hiDescLen-1));
-    hiDesc=(CGEB_HI_DESC *)CgebScanMem(cgeb->hiDescStart,cgeb->hiDescStart+cgeb->hiDescLen-1,CGEB_HD_MAGIC);
-    if (!hiDesc) return FALSE;
+      dbpf((TT("CGOS: Found CGEB_HD_MAGIC\n")));
+      printk("\n CGOS:  Found HD MAGIC %x",(unsigned int)cgeb->hiDescStart);
 
-    dbpf((TT("CGOS: Found CGEB_HD_MAGIC\n")));
+      if (hiDesc->size<sizeof(CGEB_HI_DESC)) return FALSE;
+      
+      dbpf((TT("CGOS: dataSize %u, codeSize %u, entryRel %u\n"),hiDesc->dataSize,hiDesc->codeSize,hiDesc->entryRel));
 
-    if (hiDesc->size<sizeof(CGEB_HI_DESC)) return FALSE;
+      cgeb->code=OsaMemAlloc(hiDesc->codeSize);
+      if (!cgeb->code) return FALSE;
 
-    dbpf((TT("CGOS: dataSize %u, codeSize %u, entryRel %u\n"),hiDesc->dataSize,hiDesc->codeSize,hiDesc->entryRel));
+      // copy the code
+      OsaMemCpy((char *)cgeb->code,(char *)hiDesc,hiDesc->codeSize);
 
-    cgeb->code=OsaMemAlloc(hiDesc->codeSize);
-    if (!cgeb->code) return FALSE;
+      // free the hi descriptor mapping and switch the pointer to our copied code
+      OsaUnMapAddress(pcur, 0);
+      OsaUnMapAddress(cgeb->hiDescStart,cgeb->hiDescLen);
+      cgeb->hiDescStart=NULL;
+      hiDesc=(CGEB_HI_DESC *)cgeb->code;
 
-    // copy the code
-    OsaMemCpy(cgeb->code,hiDesc,hiDesc->codeSize);
-
-    // free the hi descriptor mapping and switch the pointer to our copied code
-    OsaUnMapAddress(cgeb->hiDescStart,cgeb->hiDescLen);
-    cgeb->hiDescStart=NULL;
-    hiDesc=(CGEB_HI_DESC *)cgeb->code;
-
-    cgeb->entry=(void *)((unsigned char *)cgeb->code+hiDesc->entryRel);
+      cgeb->entry=(void *)((unsigned char *)cgeb->code+hiDesc->entryRel);
     }
+  
   dbpf((TT("CGOS: entry point at 0x%X\n"),cgeb->entry));
   cgeb->ds=GetDS();
 
@@ -399,36 +411,42 @@ unsigned int CgebOpenRaw(CGOS_DRV_BOARD *brd, unsigned char *pcur, unsigned char
     }
   else if (CgebInvokePlain(cgeb,xCgebGetDataSize,&dw) && dw) {
     cgeb->data=OsaMemAlloc(dw);
+    printk("CGOS: CgebGetDataSize %x\n",dw);
     if (!cgeb->data) return FALSE;
     }
 
   // init the data
   if (!CgebInvokePlain(cgeb,xCgebOpen,NULL)) return FALSE;
 
-  if (CgebInvokeRet(cgeb,4,xCgebMapGetMem,(void *)&cgeb->mapMem) && cgeb->mapMem) {
-    CGEB_MAP_MEM_LIST *pmm;
-    CGEB_MAP_MEM * pmme;
-    unsigned int i;
-    pmm=(CGEB_MAP_MEM_LIST *)cgeb->mapMem;
-    pmme=pmm->entries;
-    dbpf((TT("CGOS: Memory Map with %u entries\n"),pmm->count));
-    for (i=pmm->count; i; i--, pmme++) {
-      if (pmme->phys && pmme->size) {
-        pmme->virt.off=OsaMapAddress((unsigned int)pmme->phys,pmme->size); // !!! upper 32 bits are lost !!!
-        if (!pmme->virt.off) return FALSE;
-        }
-      else pmme->virt.off=0;
-      pmme->virt.seg=(pmme->virt.off)?cgeb->ds:0;
-            dbpf((TT("CGOS:   Map phys %08X, size %08X, virt %04X:%08X\n"),
-              pmme->phys,pmme->size,pmme->virt.seg,pmme->virt.off));
-      }
-    CgebInvokePlain(cgeb,xCgebMapChanged,NULL);
+  if (CgebInvokeRet(cgeb,4,xCgebMapGetMem,(void *)&cgeb->mapMem) && cgeb->mapMem)
+    {
+      CGEB_MAP_MEM_LIST *pmm;
+      CGEB_MAP_MEM * pmme;
+      unsigned int i;
+
+      pmm=(CGEB_MAP_MEM_LIST *)cgeb->mapMem;
+      pmme=pmm->entries;
+      printk("CGOS: Memory Map with %u entries\n",pmm->count);
+      for (i=pmm->count; i; i--, pmme++)
+	{
+	  if (pmme->phys && pmme->size)
+	    {
+	      pmme->virt.off=OsaMapAddress((unsigned int)pmme->phys,(unsigned int)pmme->size); // !!! upper 32 bits are lost !!!
+	      if (!pmme->virt.off) return FALSE;
+	    }
+	  else pmme->virt.off=0;
+	  pmme->virt.seg=(pmme->virt.off)?cgeb->ds:0;
+	  dbpf((TT("CGOS:   Map phys %08X, size %08X, virt %04X:%08X\n"),pmme->phys,pmme->size,pmme->virt.seg,pmme->virt.off));
+	  printk("CGOS:   Map phys %08X, size %08X, virt %04X:%08X\n",pmme->phys,pmme->size,pmme->virt.seg,pmme->virt.off);
+	}
+      CgebInvokePlain(cgeb,xCgebMapChanged,NULL);
     }
 
   // get the board info
   if (!CgebInvokeRet(cgeb,4,xCgebBoardGetInfo,(void *)&pbi)) return FALSE;
 
   dbpf((TT("CGOS: Board name: %c%c%c%c\n"),pbi->szBoard[0],pbi->szBoard[1],pbi->szBoard[2],pbi->szBoard[3]));
+  printk("CGOS: Board name: %c%c%c%c\n",pbi->szBoard[0],pbi->szBoard[1],pbi->szBoard[2],pbi->szBoard[3]);
 
   // store the board info
   OsaMemCpy(pb->szBoard,pbi->szBoard,sizeof(pb->szBoard));
@@ -516,6 +534,7 @@ unsigned int CgebOpen(CGOS_DRV_VARS *cdv, unsigned char *base, unsigned int len)
     return TRUE;
     }
 
+  printk("\nCGOS: CGEB OPEN looking for MAGIC base %x,max %x",(unsigned int)base,(unsigned int)(base+len));
   dbpf((TT("CGOS: Looking for CGEB lo desc between phys 0x%X and 0x%X\n"),(unsigned int)base,(unsigned int)base+len));
   p=(unsigned char *)OsaMapAddress((unsigned int)base,len);
   if (!p) return FALSE;

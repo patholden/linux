@@ -68,13 +68,13 @@ static unsigned int skip_txen_test; /* force skip of txen test at init time */
 /*
  * Debugging.
  */
-#if 0
+#if 1
 #define DEBUG_AUTOCONF(fmt...)	printk(fmt)
 #else
 #define DEBUG_AUTOCONF(fmt...)	do { } while (0)
 #endif
 
-#if 0
+#if 1
 #define DEBUG_INTR(fmt...)	printk(fmt)
 #else
 #define DEBUG_INTR(fmt...)	do { } while (0)
@@ -1136,7 +1136,7 @@ static void autoconfig_16550a(struct uart_8250_port *up)
  */
 static void autoconfig(struct uart_8250_port *up)
 {
-	unsigned char status1, scratch, scratch2, scratch3;
+	unsigned char status1, scratch=0, scratch2=0, scratch3=0;
 	unsigned char save_lcr, save_mcr;
 	struct uart_port *port = &up->port;
 	unsigned long flags;

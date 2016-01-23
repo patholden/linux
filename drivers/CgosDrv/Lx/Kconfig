@@ -8,10 +8,12 @@
 menu "Congatec CGOS API driver"
 
 config CGOS
-	tristate "Congatec CGOS API driver"
+	bool "Congatec CGOS API driver"
 	---help---
-	  If you want to use the congatec board features you should include
-
+	  Sets up platform device for congatec board support.
+	  misc_device "cgos" and i2c_adapter "ags-i2c" are also
+	  created to support this controller board.
+	  
 	  If unsure, say Y.
 
 endmenu

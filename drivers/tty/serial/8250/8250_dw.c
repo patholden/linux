@@ -71,6 +71,67 @@ struct dw8250_data {
 #define BYT_PRV_CLK_M_VAL_SHIFT		1
 #define BYT_PRV_CLK_N_VAL_SHIFT		16
 #define BYT_PRV_CLK_UPDATE		(1 << 31)
+#define LPSS_TX_INT			0x820
+#define LPSS_TX_INT_MASK		BIT(1)
+
+#if 1
+static void byt_set_termios(struct uart_port *p, struct ktermios *termios,
+			    struct ktermios *old)
+{
+	unsigned int baud = tty_termios_baud_rate(termios);
+	unsigned int m, n;
+	u32 reg;
+
+	/*
+	* For baud rates 0.5M, 1M, 1.5M, 2M, 2.5M, 3M, 3.5M and 4M the
+	* dividers must be adjusted.
+	*
+	* uartclk = (m / n) * 100 MHz, where m <= n
+	*/
+	switch (baud) {
+	case 500000:
+	case 1000000:
+	case 2000000:
+	case 4000000:
+		m = 64;
+		n = 100;
+		p->uartclk = 64000000;
+		break;
+	case 3500000:
+		m = 56;
+		n = 100;
+		p->uartclk = 56000000;
+		break;
+	case 1500000:
+	case 3000000:
+		m = 48;
+		n = 100;
+		p->uartclk = 48000000;
+		break;
+	case 2500000:
+		m = 40;
+		n = 100;
+		p->uartclk = 40000000;
+		break;
+	default:
+		m = 2304;
+		n = 3125;
+		p->uartclk = 73728000;
+	}
+
+	/* Reset the clock */
+	reg = (m << BYT_PRV_CLK_M_VAL_SHIFT) | (n << BYT_PRV_CLK_N_VAL_SHIFT);
+	writel(reg, p->membase + BYT_PRV_CLK);
+	reg |= BYT_PRV_CLK_EN | BYT_PRV_CLK_UPDATE;
+	writel(reg, p->membase + BYT_PRV_CLK);
+
+	/* Disable Tx counter interrupts */
+	reg = readl(p->membase + LPSS_TX_INT);
+	writel(reg | LPSS_TX_INT_MASK, p->membase + LPSS_TX_INT);
+
+	serial8250_do_set_termios(p, termios, old);
+}
+#endif
 
 static inline int dw8250_modify_msr(struct uart_port *p, int offset, int value)
 {
@@ -617,12 +678,23 @@ static const struct of_device_id dw8250_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, dw8250_of_match);
 
+struct dw8250_acpi_desc {
+	void (*set_termios)(struct uart_port *p, struct ktermios *termios,
+			    struct ktermios *old);
+};
+
+#if 1
+static struct dw8250_acpi_desc byt_8250_desc = {
+	.set_termios = byt_set_termios,
+};
+#endif
 static const struct acpi_device_id dw8250_acpi_match[] = {
 	{ "INT33C4", 0 },
 	{ "INT33C5", 0 },
 	{ "INT3434", 0 },
 	{ "INT3435", 0 },
-	{ "80860F0A", 0 },
+	{ "80860F0A", (kernel_ulong_t)&byt_8250_desc},
+	// { "80860F0A", 0 },
 	{ "8086228A", 0 },
 	{ "APMC0D08", 0},
 	{ "AMD0020", 0 },
@@ -633,6 +705,7 @@ MODULE_DEVICE_TABLE(acpi, dw8250_acpi_match);
 static struct platform_driver dw8250_platform_driver = {
 	.driver = {
 		.name		= "dw-apb-uart",
+		.owner          = THIS_MODULE,
 		.pm		= &dw8250_pm_ops,
 		.of_match_table	= dw8250_of_match,
 		.acpi_match_table = ACPI_PTR(dw8250_acpi_match),

@@ -2847,11 +2847,13 @@ static struct pci_serial_quirk *find_quirk(struct pci_dev *dev)
 	struct pci_serial_quirk *quirk;
 
 	for (quirk = pci_serial_quirks; ; quirk++)
-		if (quirk_id_matches(quirk->vendor, dev->vendor) &&
-		    quirk_id_matches(quirk->device, dev->device) &&
-		    quirk_id_matches(quirk->subvendor, dev->subsystem_vendor) &&
-		    quirk_id_matches(quirk->subdevice, dev->subsystem_device))
-			break;
+	  if (quirk_id_matches(quirk->vendor, dev->vendor) &&
+	      quirk_id_matches(quirk->device, dev->device) &&
+	      quirk_id_matches(quirk->subvendor, dev->subsystem_vendor) &&
+	      quirk_id_matches(quirk->subdevice, dev->subsystem_device))
+	    break;
+	if (quirk)
+	  printk("\nFound serial port quirk, vendor %x,device %x",dev->vendor,dev->device);
 	return quirk;
 }
 
@@ -3980,7 +3982,8 @@ pciserial_init_ports(struct pci_dev *dev, const struct pciserial_board *board)
 	 * Find an init and setup quirks.
 	 */
 	quirk = find_quirk(dev);
-
+	if (quirk)
+	  printk("\nFound serial port quirk, vendor %x,device %x",dev->vendor,dev->device);
 	/*
 	 * Run the new-style initialization function.
 	 * The initialization function returns:

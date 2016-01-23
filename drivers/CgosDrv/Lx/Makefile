@@ -11,7 +11,7 @@
 KERNELDIR ?= /lib/modules/`uname -r`/build
 CONFIG_CGOS ?= m
 
-C_source = DrvLx.c DrvOsaLx.c ../CgosDrv.c ../Cgeb.c ../Cgos_linux_if.c
+C_source = DrvLx.c DrvOsaLx.c ../CgosDrv.c ../Cgeb.c ../CgosAgsI2C.c
 #C_source = DrvLx.c DrvOsaLx.c ../CgosDrv.c ../Cgeb.c
 
 make26_pre16 = $(MAKE) -C $(KERNELDIR) M=$(PWD) modules
@@ -31,9 +31,11 @@ ifdef KERNELRELEASE
 #	EXTRA_CFLAGS += -O2 -DAMD64 -fno-strict-aliasing
 	EXTRA_CFLAGS += -O2 -fno-strict-aliasing
 	EXTRA_CFLAGS += -I$(obj)/../..
-	obj-$(CONFIG_CGOS) += cgosdrv.o	
+	EXTRA_CFLAGS += -I$(obj)/../../../include
+	EXTRA_CFLAGS += -I /home/patti/buildroot/coreutils-8.23/lib
+	obj-$(CONFIG_CGOS) += cgosdrv.o
 
-	cgosdrv-objs := DrvLx.o DrvOsaLx.o ../Cgos_linux_if.o ../Cgeb.o ../CgosDrv.o
+	cgosdrv-objs := DrvLx.o DrvOsaLx.o ../CgosAgsI2C.o ../Cgeb.o ../CgosDrv.o
 	clean-files := *.o
 else
 	PWD := $(shell pwd)

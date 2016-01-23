@@ -412,7 +412,7 @@ static int phantom_probe(struct pci_dev *pdev,
 				 "phantom%u", minor)))
 		dev_err(&pdev->dev, "can't create device\n");
 
-	pci_set_drvdata(pdev, pht);
+	pci_set_drvdata(pdev->dev, pht);
 
 	return 0;
 err_irq:

@@ -33,15 +33,22 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <asm/congatec-cgeb.h>
-
+#include <linux/efi.h>
+#include <asm/efi.h>
 #include <generated/autoconf.h>
 #include <stddef.h>
+
+#if (!defined(__cdecl))
+#define __cdecl
+#endif
 
 #define CGOS_BOARD_MAX_SIZE_ID_STRING 16
 
 #define CGEB_VERSION_MAJOR 1
 
-#define CGEB_GET_VERSION_MAJOR(v) (((unsigned long)(v))>>24)
+#define CGEB_GET_VERSION_MAJOR(v) (((unsigned int)(v))>>24)
+#define CGEB_GET_VERSION_MINOR(v) ((((unsigned int)(v))>>16)&0xff)
+#define CGEB_GET_VERSION_BUILD(v) (((unsigned int)(v))&0xffff)
 
 /* CGEB Low Descriptor located in 0xc0000-0xfffff */
 #define CGEB_LD_MAGIC "$CGEBLD$"
@@ -51,7 +58,7 @@ struct cgeb_low_desc {
 	u16 size;		/* size of this descriptor */
 	u16 reserved;
 	char bios_name[8];	/* BIOS name and revision "ppppRvvv" */
-	u32 hi_desc_phys_addr;	/* phys addr of the high descriptor, can be 0 */
+	unsigned int hi_desc_phys_addr;	/* phys addr of the high descriptor, can be 0 */
 };
 
 /* CGEB High Descriptor located in 0xfff00000-0xffffffff */
@@ -59,15 +66,15 @@ struct cgeb_low_desc {
 
 struct cgeb_high_desc {
 	char magic[8];		/* descriptor magic string */
-	u16 size;		/* size of this descriptor */
-	u16 reserved;
-	u32 data_size;		/* CGEB data area size */
-	u32 code_size;		/* CGEB code area size */
-	u32 entry_rel;		/* CGEB entry point relative to start */
+	unsigned short size;	/* size of this descriptor */
+	unsigned short reserved;
+	unsigned int data_size;	/* CGEB data area size */
+	unsigned int code_size;	/* CGEB code area size */
+	unsigned int entry_rel;	/* CGEB entry point relative to start */
 };
 
 struct cgeb_far_ptr {
-	u32 off;
+	unsigned int off;
 	u16 seg;
 	u16 pad;
 };
@@ -100,31 +107,31 @@ struct cgeb_fps {
 #define CGEB_DBG_DEC        0x102
 
 struct cgeb_map_mem {
-	unsigned long phys;	/* physical address */
-	unsigned long size;	/* size in bytes */
+	unsigned int phys;	/* physical address */
+	unsigned int size;	/* size in bytes */
 	struct cgeb_far_ptr virt;
 };
 
 struct cgeb_map_mem_list {
-	unsigned long count;	/* number of memory map entries */
+	unsigned int count;	/* number of memory map entries */
 	struct cgeb_map_mem entries[];
 };
 
 struct cgeb_boardinfo {
-	unsigned long size;
-	unsigned long flags;
-	unsigned long classes;
-	unsigned long primary_class;
+	unsigned int size;
+	unsigned int flags;
+	unsigned int classes;
+	unsigned int primary_class;
 	char board[CGOS_BOARD_MAX_SIZE_ID_STRING];
 	/* optional */
 	char vendor[CGOS_BOARD_MAX_SIZE_ID_STRING];
 };
 
 struct cgeb_i2c_info {
-	unsigned long size;
-	unsigned long type;
-	unsigned long frequency;
-	unsigned long maxFrequency;
+	unsigned int size;
+	unsigned int type;
+	unsigned int frequency;
+	unsigned int maxFrequency;
 };
 
 /* I2C Types */
@@ -142,18 +149,36 @@ struct cgeb_board_data {
   struct platform_device **devices;
   int num_devices;
 
-  /*
-   * entry points to a bimodal C style function that expects a far pointer
-   * to a fps. If cs is 0 then it does a near return, otherwise a far
-   * return. If we ever need a far return then we must not pass cs at all.
-   * parameters are removed by the caller.
-   */
-  void __attribute__((regparm(0)))(*entry)(unsigned short,
-			struct cgeb_fps *, unsigned short);
+  void *entry;
 };
+
+/*
+ * entry points to a bimodal C style function that expects a far pointer
+ * to a fps. If cs is 0 then it does a near return, otherwise a far
+ * return. If we ever need a far return then we must not pass cs at all.
+ * parameters are removed by the caller.
+ */
+static void cgeb_efi_call(struct cgeb_fps *fps, void *addr)
+{
+#if !defined(AMD64)
+  // addr points to a bimodal C style function that expects a far pointer to an fps.
+  // if cs is 0 then it does a near return, otherwise a far return.
+  // if we ever need a far return then we must not pass cs at all.
+  // parameters are removed by the caller
+  ((void (__cdecl *)(unsigned short cs, struct cgeb_fps *fps, unsigned short ds))addr)(0,fps,fps->data.seg);
+#else
+  // CGEBQ expects FPS in edx (ecx is reserved and must be 0)
+  // x64 (MS) calling convention is rcx, rdx, r8, r9
+  // ABI (linux) calling convention rdi, rsi, rdx, rcx
+  // parameters are removed by the caller
+  ((void (*)(void *, struct cgeb_fps *fps, struct cgeb_fps *fps_abi, void *))addr)(NULL,fps,fps,NULL);
+#endif
+}
 
 static unsigned short get_data_segment(void)
 {
+    // Refer to Cgeb.c
+#if 0
   unsigned short ret;
 
   asm volatile("mov %%ds, %0\n"
@@ -162,6 +187,13 @@ static unsigned short get_data_segment(void)
 	       : "memory"
 	       );
   return ret;
+#else
+  static unsigned char get_data_seg_raw[]= { // cs would be 0xC8
+    0x8C, 0xD8,         // mov ax,ds
+    0xC3                // ret
+    };
+  return ((unsigned short (*)(void))get_data_seg_raw)();
+#endif
 }
 
 /*
@@ -184,7 +216,7 @@ unsigned int cgeb_call(struct cgeb_board_data *board,
 
   fps.size = sizeof(fps);
   fps.fct = fct;
-  fps.data.off = (unsigned long) board->data;
+  fps.data.off = (unsigned int) board->data;
   fps.data.seg = board->ds;
   fps.data.pad = 0;
   fps.status = 0;
@@ -200,8 +232,8 @@ unsigned int cgeb_call(struct cgeb_board_data *board,
 	     fps.size, fps.fct, fps.data.seg, fps.data.off,
 	     fps.status);
 
-    board->entry(0, &fps, fps.data.seg);
-
+    cgeb_efi_call(&fps, board->entry);
+    
     switch (fps.status) {
     case CGEB_SUCCESS:
       goto out;
@@ -250,8 +282,8 @@ EXPORT_SYMBOL_GPL(cgeb_call);
  * Call the CGEB BIOS code with the given parameters.
  */
 int cgeb_call_simple(struct cgeb_board_data *board,
-		     enum cgeb_function fct, unsigned long unit,
-		     unsigned long *optr, unsigned long *result)
+		     enum cgeb_function fct, unsigned int unit,
+		     void *optr, unsigned int *result)
 {
   struct cgeb_function_parameters p;
   unsigned int ret;
@@ -261,8 +293,7 @@ int cgeb_call_simple(struct cgeb_board_data *board,
   p.optr = optr;
 
   ret = cgeb_call(board, &p, fct);
-  if (optr)
-    *optr = (unsigned long)p.optr;
+  optr = (unsigned int)p.optr;
   if (result)
     *result = p.rets[0];
   
@@ -270,15 +301,16 @@ int cgeb_call_simple(struct cgeb_board_data *board,
 }
 EXPORT_SYMBOL_GPL(cgeb_call_simple);
 
-static void *cgeb_find_magic(void *_mem, size_t len, char *magic)
+static void *cgeb_find_magic(unsigned char *_mem, size_t len, char *magic)
 {
-  unsigned long magic0 = ((unsigned long *) magic)[0];
-  unsigned long magic1 = ((unsigned long *) magic)[1];
+  unsigned int magic0=((unsigned int *)magic)[0];
+  unsigned int magic1=((unsigned int *)magic)[1];
+
   int i = 0;
 
   while (i < len) {
-    u32 *mem = _mem + i;
-    if (mem[0] == magic0 && mem[1] == magic1)
+    char *mem = (char *)_mem + i;
+    if (*(unsigned int *)mem==magic0 && ((unsigned int *)mem)[1]==magic1)
       return mem;
     i += 16;
   }
@@ -290,7 +322,7 @@ static void cgeb_unmap_memory(struct cgeb_board_data *board)
 {
   struct cgeb_map_mem_list *pmm;
   struct cgeb_map_mem *pmme;
-  unsigned long i;
+  unsigned int i;
 
   if (!board->map_mem)
     return;
@@ -299,7 +331,7 @@ static void cgeb_unmap_memory(struct cgeb_board_data *board)
   pmme = pmm->entries;
   for (i = 0; i < pmm->count; i++, pmme++) {
     if (pmme->virt.off)
-      iounmap((void *)pmme->virt.off);
+      iounmap(pmme->virt.off);
     pmme->virt.off = 0;
     pmme->virt.seg = 0;
   }
@@ -322,12 +354,12 @@ static int cgeb_map_memory(struct cgeb_board_data *board)
   pmm = board->map_mem;
   pmme = pmm->entries;
 
-  pr_debug("CGEB: Memory Map with %lu entries\n", pmm->count);
+  pr_debug("CGEB: Memory Map with %u entries\n", pmm->count);
 
   for (i = 0; i < pmm->count; i++, pmme++) {
     if (pmme->phys && pmme->size) {
       pmme->virt.off =
-	(unsigned long) ioremap_cache(pmme->phys,
+	(unsigned int) early_ioremap(pmme->phys,
 				      pmme->size);
       if (!pmme->virt.off)
 	return -ENOMEM;
@@ -344,100 +376,117 @@ static int cgeb_map_memory(struct cgeb_board_data *board)
   return cgeb_call_simple(board, CgebMapChanged, 0, NULL, NULL);
 }
 
-static struct cgeb_board_data *cgeb_open(unsigned long base, unsigned long len)
+static struct cgeb_board_data *cgeb_open(unsigned int base, unsigned int len)
 {
-  unsigned long dw;
+  unsigned int dw=0;
   struct cgeb_boardinfo *pbi;
   struct cgeb_low_desc *low_desc;
   struct cgeb_high_desc *high_desc = NULL;
-  unsigned long high_desc_phys;
-  unsigned long high_desc_len;
+  unsigned int high_desc_phys;
+  unsigned int high_desc_len;
   void __iomem *pcur, *high_desc_virt;
   int ret;
 
   struct cgeb_board_data *board;
 
-  board = kzalloc(sizeof(*board), GFP_KERNEL);
+  board = kzalloc(sizeof(struct cgeb_board_data), GFP_KERNEL);
   if (!board)
     return NULL;
 
-  pcur = ioremap_cache(base, len);
+  memset((char *)board, 0, sizeof(struct cgeb_board_data));
+	 
+  pcur = early_ioremap(base, len);
   if (!pcur)
     goto err_kfree;
+  
+  printk("\nbase %x ioremap %x",base,(unsigned int)pcur);
 
   /* look for the CGEB descriptor */
-  low_desc = cgeb_find_magic(pcur, len, CGEB_LD_MAGIC);
+  low_desc = cgeb_find_magic((unsigned char *)pcur, len, CGEB_LD_MAGIC);
+  iounmap(base);
   if (!low_desc)
     goto err_kfree;
 
-  pr_debug("CGEB: Found CGEB_LD_MAGIC\n");
+    pr_debug("CGEB: Found CGEB_LD_MAGIC\n");
 
-  if (low_desc->size < sizeof(struct cgeb_low_desc) - sizeof(long))
+  if (low_desc->size < sizeof(struct cgeb_low_desc) - sizeof(int))
     goto err_kfree;
 
+  printk("\nI2C-CGEB: FOUND LD_MAGIC at base addr %x, mapped %x", base, pcur);
   if (low_desc->size >= sizeof(struct cgeb_low_desc)
       && low_desc->hi_desc_phys_addr)
     high_desc_phys = low_desc->hi_desc_phys_addr;
   else
     high_desc_phys = 0xfff00000;
 
-  high_desc_len = (unsigned long) -(long) high_desc_phys;
+  high_desc_len = 0x100000;
 
-  pr_debug("CGEB: Looking for CGEB hi desc between phys 0x%lx and 0x%x\n",
-	   high_desc_phys, -1);
-
+  pr_debug("CGEB: Looking for CGEB hi desc between phys 0x%x and 0x%x\n",
+	   high_desc_phys, high_desc_len);
   high_desc_virt = ioremap_cache(high_desc_phys, high_desc_len);
   if (!high_desc_virt)
     goto err_kfree;
 
+  // At this point, we allocated board memory plus io mem.  Need to release
+  // both on error-out.
   pr_debug("CGEB: Looking for CGEB hi desc between virt 0x%p and 0x%p\n",
 	   high_desc_virt, high_desc_virt + high_desc_len - 1);
 
-  high_desc = cgeb_find_magic(high_desc_virt, high_desc_len,
-			      CGEB_HD_MAGIC);
+  printk("\nI2C-CGEB: Looking for HD MAGIC at %x, length %x",high_desc_phys, high_desc_len);
+
+  high_desc = (struct cgeb_high_desc *)cgeb_find_magic((unsigned char *)high_desc_virt, high_desc_len, CGEB_HD_MAGIC);
   if (!high_desc)
     goto err_iounmap;
 
   pr_debug("CGEB: Found CGEB_HD_MAGIC\n");
+  printk("\nI2C-CGEB: FOUND HD_MAGIC at base addr %x, mapped %x", high_desc_virt, (unsigned int)high_desc);
 
   if (high_desc->size < sizeof(struct cgeb_high_desc))
     goto err_iounmap;
-
-  pr_debug("CGEB: data_size %u, code_size %u, entry_rel %u\n",
-	   high_desc->data_size, high_desc->code_size, high_desc->entry_rel);
 
   board->code = __vmalloc(high_desc->code_size, GFP_KERNEL,
 			  PAGE_KERNEL_EXEC);
   if (!board->code)
     goto err_iounmap;
 
-  memcpy(board->code, high_desc, high_desc->code_size);
-
-  high_desc = board->code;
-  board->entry = board->code + high_desc->entry_rel;
+  memcpy((char *)board->code, (char *)high_desc, high_desc->code_size);
+  // At this point we have board allocated, high io-mem still mapped, and now
+  // the code space allocated & copied.  Need to free all 3 on error-out.
+  
+  high_desc = (struct cgeb_high_desc *)board->code;
+  board->entry = (void *)((unsigned char *)board->code + high_desc->entry_rel);
   board->ds = get_data_segment();
+
+  printk("\nCGEB: high phys %x, low phys %x, board entry %x, ds %x\n",high_desc_phys,base, board->entry,board->ds);
   ret = cgeb_call_simple(board, CgebGetCgebVersion, 0, NULL, &dw);
   if (ret)
     goto err_vfree;
 
+  printk("\nCGEB: Made it past first call version %x\n",CGEB_GET_VERSION_MAJOR(dw));
+  goto err_vfree;
+  
   if (CGEB_GET_VERSION_MAJOR(dw) != CGEB_VERSION_MAJOR)
     goto err_vfree;
 
-  pr_debug("CGEB: BIOS interface revision: %ld.%ld\n",
+  pr_debug("CGEB: BIOS interface revision: %d.%d\n",
 	   dw >> 16, dw & 0xffff);
 
-  if (high_desc->data_size) {
-    board->data = vmalloc(high_desc->data_size);
-    if (!board->data)
-      goto err_vfree;
-  } else {
-    ret = cgeb_call_simple(board, CgebGetDataSize, 0, NULL, &dw);
-    if (!ret && dw) {
-      board->data = vmalloc(dw);
+  if (high_desc->data_size)
+    {
+      board->data = vmalloc(high_desc->data_size);
       if (!board->data)
 	goto err_vfree;
     }
-  }
+  else
+    {
+      ret = cgeb_call_simple(board, CgebGetDataSize, 0, NULL, &dw);
+      if (!ret && dw)
+	{
+	  board->data = vmalloc(dw);
+	  if (!board->data)
+	    goto err_vfree;
+	}
+    }
 
   ret = cgeb_call_simple(board, CgebOpen, 0, NULL, NULL);
   if (ret)
@@ -452,12 +501,12 @@ static struct cgeb_board_data *cgeb_open(unsigned long base, unsigned long len)
     goto err_free_map;
 
   pbi = (struct cgeb_boardinfo *) dw;
-
+  
   pr_info("CGEB: Board name: %c%c%c%c\n",
 	  pbi->board[0], pbi->board[1],
 	  pbi->board[2], pbi->board[3]);
 
-  iounmap(high_desc_virt);
+  iounmap(high_desc_phys);
   return board;
 
 err_free_map:
@@ -467,7 +516,7 @@ err_vfree_data:
 err_vfree:
   vfree(board->code);
 err_iounmap:
-  iounmap(high_desc_virt);
+  iounmap(high_desc_phys);
 err_kfree:
   kfree(board);
   return NULL;
@@ -483,7 +532,7 @@ static void cgeb_close(struct cgeb_board_data *board)
   vfree(board->code);
 }
 
-static unsigned long cgeb_i2c_get_type(struct cgeb_board_data *brd, int unit)
+static unsigned int cgeb_i2c_get_type(struct cgeb_board_data *brd, int unit)
 {
   struct cgeb_i2c_info *info;
   int ret;
@@ -500,33 +549,38 @@ static struct cgeb_board_data *cgeb_board;
 
 static int __init cgeb_init(void)
 {
-  struct cgeb_board_data *board;
-  unsigned long base;
+  struct cgeb_pdata pdata __aligned(8);
+  struct cgeb_board_data *board=0;
+  unsigned int basenibbles,baseaddr;
   int i, ret;
-  struct cgeb_pdata pdata;
-  unsigned long i2c_count, watchdog_count;
+  unsigned int i2c_count;
   int num_devices = 0;
 
-  for (base = 0xf0000; base >= 0xc0000; base -= 0x10000) {
-    board = cgeb_open(base, 0x10000);
-    if (board)
-      break;
-  }
+  //  for (base = 0xf0000; base >= 0xc0000; base -= 0x10000) {
+  for (basenibbles=0xfedc0; (baseaddr=basenibbles&0xf0000); basenibbles<<=4)
+    {
+      printk("\nI2C CGEB board base addr %x", baseaddr);
+      board = cgeb_open(baseaddr, 0x10000);
+      if (board)
+	break;
+    }
 
   if (!board)
-    return -ENODEV;
-
+    {
+      printk(KERN_ERR "There seems to be NO Congatec CGEB interface!\n");
+      return -ENODEV;
+    }
   cgeb_board = board;
 
   pdata.board = board;
 
   cgeb_call_simple(board, CgebI2CCount, 0, NULL, &i2c_count);
-  cgeb_call_simple(board, CgebWDogCount, 0, NULL, &watchdog_count);
 
-  board->num_devices = i2c_count + watchdog_count;
+  board->num_devices = i2c_count;
   board->devices = kzalloc(sizeof(void *) * (board->num_devices),
 			   GFP_KERNEL);
   if (!board->devices) {
+    printk(KERN_ERR "There seem to be NO Congatec board devices!\n");
     ret = -ENOMEM;
     goto err_out;
   }
@@ -542,15 +596,6 @@ static int __init cgeb_init(void)
 				    &pdata, sizeof(pdata));
     num_devices++;
   }
-
-  for (i = 0; i < watchdog_count; i++) {
-    board->devices[num_devices] =
-      platform_device_register_data(NULL, "cgeb-watchdog", i,
-				    &pdata, sizeof(pdata));
-    pdata.unit = i;
-    num_devices++;
-  }
-
   return 0;
 err_out:
   cgeb_close(board);
@@ -576,5 +621,5 @@ module_init(cgeb_init);
 module_exit(cgeb_exit);
 
 MODULE_AUTHOR("Sascha Hauer <s.hauer@pengutronix.de>");
-MODULE_DESCRIPTION("Congatec CGEB driver");
+MODULE_DESCRIPTION("Congatec CGEB i2c driver");
 MODULE_LICENSE("GPL");

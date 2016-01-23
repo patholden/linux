@@ -4,7 +4,8 @@
 
 config PINCTRL_BAYTRAIL
 	bool "Intel Baytrail GPIO pin control"
-	depends on GPIOLIB && ACPI
+	depends on ACPI
+	select GPIOLIB 
 	select GPIOLIB_IRQCHIP
 	help
 	  driver for memory mapped GPIO functionality on Intel Baytrail
@@ -13,6 +14,22 @@ config PINCTRL_BAYTRAIL
 	  so only a small amount is available for gpio use.
 
 	  Requires ACPI device enumeration code to set up a platform device.
+
+config PINCTRL_BAYTRAIL_DEVICE
+	bool "Intel Baytrail GPIO pin control Platform Device Emulation"
+	depends on PINCTRL_BAYTRAIL
+	select PINMUX
+	select PINCONF
+	select GENERIC_PINCONF
+	select GPIOLIB
+	select GPIOLIB_IRQCHIP
+	help
+	  This driver is to set up platform device in the absent of ACPI
+	  enumeration.
+
+	  Say yes for non-ACPI platform. This will enable the platform devices
+	  to be created and bind with the BayTrail GPIO pin control platform
+	  driver.
 
 config PINCTRL_CHERRYVIEW
 	tristate "Intel Cherryview/Braswell pinctrl and GPIO driver"

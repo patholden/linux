@@ -514,6 +514,13 @@ config VEXPRESS_SYSCFG
 	  ARM Ltd. Versatile Express uses specialised platform configuration
 	  bus. System Configuration interface is one of the possible means
 	  of generating transactions on this bus.
+config AGS_LASERGUIDE
+	bool "AGS Laser Guidance System driver"
+	default y
+	---help---
+	  This device provides read-write-ioctl access
+	  to the AGS FPGA laser guidance device in /dev/laser.  It is
+	  accessed via ioctl, read, write commands from the AGS app.
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"

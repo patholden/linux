@@ -609,14 +609,6 @@ config TILE_SROM
 	  device appear much like a simple EEPROM, and knows
 	  how to partition a single ROM for multiple purposes.
 
-config AGS_LASERGUIDE
-	bool "Character-device access for AGS Laser Guidance System"
-	default y
-	---help---
-	  This device provides character-level read-write access
-	  to the AGS FPGA laser guidance device in /dev/laser.  It is
-	  accessed via ioctl commands from the AGS user-space app.
-
 source "drivers/char/xillybus/Kconfig"
 
 endmenu

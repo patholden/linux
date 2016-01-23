@@ -24,6 +24,8 @@
 
 //***************************************************************************
 
+#include <linux/printk.h>
+#include <linux/platform_device.h>
 #include "CgosDrv.h"
 #include "CgosBld.h"
 
@@ -1050,24 +1052,32 @@ unsigned int UlaDeviceIoControl(void *hDriver, unsigned int dwIoControlCode,
 
 void __cdecl CgebEmu(unsigned short cs, CGEBFPS *fps, unsigned short ds);
 
-void *UlaOpenDriver(unsigned long reserved)
-  {
+void *UlaOpenDriver(struct platform_device *pdev, unsigned long reserved)
+{
   CGOS_DRV_VARS *cdv;
   //  unsigned int basenibbles,baseaddr;
   unsigned long basenibbles,baseaddr;
   cdv=OsaMemAlloc(sizeof(*cdv));
-  if (!cdv) return NULL;
+  if (!cdv)
+    {
+      dev_dbg(&pdev->dev, "\nCgosDrv unable to allocate memory for driver struct");
+      return NULL;
+    }
   OsaMemSet(cdv,0,sizeof(*cdv)); // clears boardCount;
   cdv->osDrvVars=(void *)reserved;
   for (basenibbles=0xfedc0; (baseaddr=basenibbles&0xf0000); basenibbles<<=4)
-    if (CgebOpen(cdv,(void *)baseaddr,0x10000))
-      return cdv;
-#ifdef CGEBEMU
-  dbpf((TT("CGOS: >>> WARNING: REAL CGEB NOT FOUND! USING EMULATOR! <<<\n")));
-  CgebOpen(cdv,(unsigned char *)CgebEmu,0);
-#endif
-  return cdv;
-  }
+    {
+      if (CgebOpen(cdv,(void *)baseaddr,0x10000))
+	{
+	  dev_dbg(&pdev->dev, "\nFOUND CosDrv CGEB board at base addr %lx", baseaddr);
+	  return cdv;
+	}
+    }
+
+  dev_dbg(&pdev->dev, "CGEB open error: Cannot find CGEB board");
+  OsaMemFree(cdv);
+  return(NULL);
+}
 
 void UlaCloseDriver(void *hDriver)
   {

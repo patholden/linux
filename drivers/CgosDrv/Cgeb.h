@@ -343,7 +343,7 @@ typedef struct {
   unsigned int type;
   unsigned int frequency;
   unsigned int maxFrequency;
-  } CGEB_I2C_INFO;
+} CGEB_I2C_INFO;
 
 // I2C Types
 

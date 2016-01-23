@@ -410,15 +410,6 @@ config X86_EXTENDED_PLATFORM
 endif
 # This is an alphabetically sorted list of 64 bit extended platforms
 # Please maintain the alphabetic order if and when there are additions
-config CONGATEC_CGEB
-	bool "Support for the Congatec CGEB BIOS interface"
-	---help---
-	  The Congatec CGEB BIOS interface provides access to onboard
-	  peripherals like I2C busses and watchdogs. additional drivers must be
-	  enabled in order to use the functionality of the device.
-	  Say y or m here if you are using a congatec module with CGEB interface,
-	  otherwise say n.
-
 config X86_NUMACHIP
 	bool "Numascale NumaChip"
 	depends on X86_64

@@ -91,8 +91,8 @@ unsigned int cgeb_call(struct cgeb_board_data *,
 		struct cgeb_function_parameters *, enum cgeb_function);
 
 int cgeb_call_simple(struct cgeb_board_data *,
-		enum cgeb_function, unsigned long,
-		unsigned long *, unsigned long *);
+		enum cgeb_function, unsigned int,
+		void *, unsigned int *);
 
 /*
  * Platform data for child devices

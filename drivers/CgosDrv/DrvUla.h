@@ -35,7 +35,7 @@
 
 //***************************************************************************
 
-cgos_cdecl void *UlaOpenDriver(unsigned long reserved);
+cgos_cdecl void *UlaOpenDriver(struct platform_device *pdev, unsigned long reserved);
 cgos_cdecl void UlaCloseDriver(void *hDriver);
 cgos_cdecl unsigned int UlaGetBoardCount(void *hDriver);
 cgos_cdecl unsigned char *UlaGetBoardName(void *hDriver, unsigned int Index);
