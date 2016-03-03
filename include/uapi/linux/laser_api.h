@@ -3,6 +3,7 @@
 
 // Kernel Event Timer values used
 #define KETIMER_10M   10000         // Sets timer to approx 10msec
+#define KETIMER_10U    10           // Sets timer to approx 10usec
 #define KETIMER_40U    40           // Sets timer to approx 40usec
 #define KETIMER_50U    50           // Sets timer to approx 50usec
 #define KETIMER_75U    75           // Sets timer to approx 75usec(default)
@@ -10,40 +11,47 @@
 #define KETIMER_150U  100           // Sets timer to approx 150usec
 
 /*  IO addresses */
-#define   LG_BASE            0x380
-#define   LG_IO_CNTRL1       0x380
-#define   LG_IO_X2           0x382          // X low byte (writes to DAC input)
-#define   LG_IO_X3           0x383          // X high byte
-#define   LG_IO_Y2           0x386          // Y low byte (writes to DAC input)
-#define   LG_IO_Y3           0x387          // Y high byte
-#define   LG_IO_CNTRL2       0x388          // 
-#define   TFPORTRL           0x390          // Read TF IO port address
-#define   TFPORTRH           0x392          // Read upper byte of TF IO ;
-#define   TFPORTW            0x394          // Write TF IO port address 
-#define   LASER_REGION (TFPORTW-LG_BASE)
+//NOTE: 0x380 & 0x390 are reserved for X86 PIC
+#define   LG_BASE            0x378
+#define   LG_IO_CNTRL1       0x378
+#define   LG_IO_CNTRL2       0x379          //
+#define   LG_IO_XL           0x37A          // X low byte (writes to DAC input)
+#define   LG_IO_XH           0x37B          // X high byte
+#define   LG_IO_YL           0x37C          // Y low byte (writes to DAC input)
+#define   LG_IO_YH           0x37D          // Y high byte
+#define   TFPORTRL           0x37E          // Read lower byte of TF IO
+#define   TFPORTRH           0x37F          // Read upper byte of TF IO
+#define   LASEREND           0x380          // RESERVED BY X86 FOR APIC
+#define   LASER_REGION (LASEREND-LG_BASE)
 
 // Control flags for IO-writes
-#define  UNBLANKISSET    0x1
-#define  SHUTENBISSET  0x2
-#define  BRIGHTISSET   0x4
+#define  BEAMONISSET    0x1
+#define  BEAMONNOTSET   0xFE
+#define  LASERENBISSET  0x2
+#define  BRIGHTBEAMISSET 0x4
+#define  BRIGHTBEAMNOTSET 0xFB
 
 // BITMASKS for LG_IO_CNTRL1
-#define  UNBLANKBITMASK  0x40
+#define  LASER_BEAM_ON  0x40
 #define  DACSTRBBITMASK  0x80
-#define   STROBE_ON_LASER_ON  DACSTRBBITMASK | UNBLANKBITMASK
-#define   STROBE_OFF_LASER_ON  UNBLANKBITMASK
+#define   STROBE_ON_LASER_ON  DACSTRBBITMASK | LASER_BEAM_ON
+#define   STROBE_OFF_LASER_ON  LASER_BEAM_ON
 #define   STROBE_ON_LASER_OFF  DACSTRBBITMASK
 #define   STROBE_OFF_LASER_OFF  0x00
 
 // BITMASKS FOR LG_IO_CNTRL2
-#define  SHUTENBBITMASK  0x80
-#define  BRIGHTBITMASK   0x40
-#define  RDYLEDBITMASK      0x10
-#define  LNKLEDBITMASK   0x02
-#define  SHUTENB_ON_LASER_ON SHUTENBBITMASK | BRIGHTBITMASK
-#define  SHUTENB_ON_LASER_OFF SHUTENBBITMASK
-#define  SHUTENB_OFF_LASER_ON BRIGHTBITMASK
-#define  SHUTENB_OFF_LASER_OFF 0x0
+#define  LASERENABLE  0x80
+#define  LASERDISABLE 0x7F
+#define  BRIGHTBEAM   0x40
+#define  DIMBEAM      0xBF
+#define  RDYLEDON     0x10
+#define  RDYLEDOFF    0xEF
+#define  LNKLEDON     0x04
+#define  LNKLEDOFF    0xFB
+#define  SHUTENB_ON_LASER_ON LASERENABLE | BRIGHTBEAM
+#define  SHUTENB_ON_LASER_OFF LASERENABLE
+#define  SHUTENB_OFF_LASER_ON BRIGHTBEAM
+#define  SHUTENB_OFF_LASER_OFF DIMBEAM
 
 // STATUS BITMASKS LG_IO_CNTRL2 READ
 #define SHTOPNCLSDTCT 0x80
@@ -92,16 +100,16 @@ typedef enum{
 
 // CMD-WRITE DEFINES
 #define CMD_LAST CMDR_GETQCFLAG   // NOTE:  Change this if appending new commands
-#define   MAX_LG_BUFFER    0x40000  /* maximum size of lg_data[] */
+#define   MAX_LG_BUFFER    0x80000  /* maximum size of lg_data[] */
 #define   MAX_DIODE_BUFFER 0x10000  /* maximum number of diode readings */
-
+#define   DO_TEST_DISPLAY  0x1      // USED BY DIAGS.  Will simulate DISPLAY mode
 struct lg_xydata {
-  char      ctrl_flags;
+  uint8_t   ctrl_flags;
   char      unused1;
-  uint16_t  xdata;
+  int16_t   xdata;     // Needs to be signed to deal with LTC1597 bipolar data
   char      unused2;
   char      unused3;
-  uint16_t  ydata;
+  int16_t   ydata;     // Needs to be signed to deal with LTC1597 bipolar data
 };
 struct lg_val16 {
   uint16_t   val16;
@@ -116,7 +124,8 @@ struct lg_val64 {
   double     val64;
 };
 struct cmd_rw_base {
-  uint32_t   cmd;
+  uint16_t   cmd;
+  uint16_t   test_mode;
   uint32_t   length;
   union {
     struct lg_val16 dat16;
@@ -125,10 +134,12 @@ struct cmd_rw_base {
     struct lg_xydata xydata;
   };
 };
+#define   MAX_XYPOINTS    MAX_LG_BUFFER/sizeof(struct lg_xydata)
 struct cmd_rw {
   struct cmd_rw_base base;
-  char   data[MAX_LG_BUFFER * sizeof(struct lg_xydata)];
+  struct lg_xydata  xydata[MAX_XYPOINTS];
 };
+
 
 /* the following are ioctl commands following the linux convention */
 #define LG_IOCNUM  0xE1
