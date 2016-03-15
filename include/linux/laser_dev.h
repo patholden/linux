@@ -21,8 +21,6 @@
 // state machine defines
 #define LGSTATE_IDLE     0
 #define LGSTATE_DISPLAY  1
-#define LGSTATE_DOSENS   2
-#define LGSTATE_TGFIND   3
 
 // Max # devices allowed for laser (only 1 is initialized right now)
 #define LG_NUM_DEVICES   256

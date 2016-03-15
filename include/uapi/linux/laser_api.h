@@ -9,6 +9,7 @@
 #define KETIMER_75U    75           // Sets timer to approx 75usec(default)
 #define KETIMER_100U  100           // Sets timer to approx 100usec
 #define KETIMER_150U  100           // Sets timer to approx 150usec
+#define XYMAX         0x7FFF        // XY vals can't exceed 0x7FFF for DAC.
 
 /*  IO addresses */
 //NOTE: 0x380 & 0x390 are reserved for X86 PIC
@@ -65,7 +66,6 @@ typedef enum{
   CMDW_BUFFER=1,
   CMDW_STOP,
   CMDW_DISPLAY,
-  CMDW_RSTRTTMR,
   CMDW_DODARKSENS,
   CMDW_QUICKCHECK,
   CMDW_SETDELTA,
@@ -102,7 +102,7 @@ typedef enum{
 // CMD-WRITE DEFINES
 #define CMD_LAST CMDR_GETQCFLAG   // NOTE:  Change this if appending new commands
 #define   MAX_LG_BUFFER    0x80000  /* maximum size of lg_data[] */
-#define   MAX_DIODE_BUFFER 0x10000  /* maximum number of diode readings */
+#define   MAX_TGFIND_BUFFER 0x10000  /* maximum number of target-find readings */
 #define   DO_TEST_DISPLAY  0x1      // USED BY DIAGS.  Will simulate DISPLAY mode
 struct hobbs_ctrs {
   time_t    hobbs_time;

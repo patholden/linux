@@ -49,7 +49,11 @@ struct lg_dev {
   // Start of actual lg private data
   struct hrtimer          lg_timer;
   struct timeval          last_ts;
-  struct event_times      last_events;     // Used to track timing of lg_timeout
+  struct event_times      last_events;     // Used to track timing of lg2_evt_hdlr
+  struct lg_xydata        lg_save;
+  struct lg_xydata        lg_delta;
+  uint32_t                lg_state;
+  uint32_t                lg_do_sensor;
   uint32_t                poll_frequency;    // Adjusted to nsec in CMDW_SETCLOCK
   uint32_t                lg_dark_search;    // This will force laser off to avoid "ghost" traces
   uint8_t                 lg_ctrl2_store;    // Control byte 2 settings
@@ -59,13 +63,11 @@ struct file_priv {
 	struct lg_dev *lg_devp;
 };
 static struct lg_xydata lg_out_data[MAX_XYPOINTS];
-static uint8_t  diode_data[MAX_DIODE_BUFFER];
-static uint16_t diode_word[MAX_DIODE_BUFFER];
+static uint16_t tgfind_word[MAX_TGFIND_BUFFER];
 static uint32_t lg_out_data_index = 0;
 uint32_t lg_out_data_end   = 0;
 uint32_t lg_in_data_index = 0;
 uint32_t lg_in_data_end   = 0;
-uint32_t lg_state = LGSTATE_IDLE;
 uint32_t lg_qc_flag = 0;
 uint32_t lg_qc_counter = 0;
 int32_t  lg_hw_trigger = 0;
@@ -78,8 +80,6 @@ int32_t  lg_pulsemodeflag   = 0;
 int32_t  lg_pulsecounter    = 0;
 int32_t  lg_pulseonvalue    = 0;
 int32_t  lg_pulseoffvalue   = 0;
-struct lg_xydata   lg_save;
-struct lg_xydata   lg_delta;
 static int lg_shutter_open;
 uint8_t lg_threshold = 0;
 
@@ -88,7 +88,7 @@ uint8_t lg_threshold = 0;
 #define UCOUNT   500
 
 // STATIC FUNCTION PROTOTYPES
-static enum hrtimer_restart lg_timeout(struct hrtimer *timer);
+static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer);
 static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDevXYData);
 static int lg_pdev_remove(struct platform_device *pdev);
 static int lg_dev_probe(struct platform_device *dev);
@@ -127,11 +127,18 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
       ctrl1_off = STROBE_OFF_LASER_OFF;
     }
 
-  // Figure out & set control byte 2
-  if (!priv->lg_dark_search && (pDevXYData->ctrl_flags & LASERENBISSET))
-    priv->lg_ctrl2_store |= LASERENABLE;
-  else
+  // LASER check. dark search takes precedence.
+  // if set, shut laser off.  otherwise check
+  // values in XY pair & set accordingly
+  if (priv->lg_dark_search)
     priv->lg_ctrl2_store &= LASERDISABLE;
+  else
+    {
+      if (pDevXYData->ctrl_flags & LASERENBISSET)
+	priv->lg_ctrl2_store |= LASERENABLE;
+      else
+	priv->lg_ctrl2_store &= LASERDISABLE;
+    }	
   if (pDevXYData->ctrl_flags & BRIGHTBEAMISSET)
     priv->lg_ctrl2_store |= BRIGHTBEAM;
   else
@@ -176,36 +183,32 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     return(-ENODEV);
 
   switch(p_cmd_data->base.cmd) {
-  case CMDW_RSTRTTMR:
-    // Restart timer
-    hrtimer_start(&priv->lg_timer, ktime_set(0, priv->poll_frequency), HRTIMER_MODE_REL);
-    break;
   case CMDW_SETQCCOUNTER:
     if (p_cmd_data->base.length != sizeof(uint32_t))
       return(-EINVAL);
     lg_qc_counter = p_cmd_data->base.dat32.val32;
     break;
   case CMDW_STOP:
-    // Stop timer for new command
-    //    hrtimer_cancel(&priv->lg_timer);
-    lg_state = LGSTATE_IDLE;
+    priv->lg_state = LGSTATE_IDLE;
+    priv->lg_do_sensor = 0;
     memset((char *)&xy_data, 0, sizeof(struct lg_xydata));
     lg_write_io_to_dac(priv, (struct lg_xydata *)&xy_data);
     break;
+#if 0
+    //FIXME---PAH---THIS IS NEVER USED
   case CMDW_STARTPULSE:
     lg_pulsecounter  = 0;
     lg_pulsemodeflag = 1;
     break;
+#endif
   case CMDW_STOPPULSE:
     lg_pulsemodeflag = 0;
     break;
   case CMDW_DISPLAY:
     lg_qc_flag = 0;   /* set quick check flag to "false" */
-    lg_state = LGSTATE_DISPLAY;
+    priv->lg_state = LGSTATE_DISPLAY;
     lg_out_data_index = 0;  /* reset from beginning */
-    printk(KERN_CRIT "\nDISPCMD: ctrl2 settings %x",priv->lg_ctrl2_store);
     priv->lg_ctrl2_store |= LASERENABLE;
-    hrtimer_start(&priv->lg_timer, ktime_set(0, priv->poll_frequency), HRTIMER_MODE_REL);
     break;
   case CMDW_ROIOFF:
     lg_roi_test  = 0;
@@ -214,35 +217,32 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     break;
   case CMDW_DOSENSOR:  /* everything should be set up before this */
     priv->lg_dark_search = 0;
-    lg_state = LGSTATE_DOSENS;       /* not moved to read routine */
+    priv->lg_do_sensor = 1;
+    priv->lg_ctrl2_store |= LASERENABLE; 
     lg_in_data_index = 0;
-    hrtimer_start(&priv->lg_timer, ktime_set(0, priv->poll_frequency), HRTIMER_MODE_REL);
     break;
   case CMDW_DODARKSENS:  /* everything should be set up before this */
     priv->lg_dark_search = 1;
-    lg_state = LGSTATE_DOSENS;       /* not moved to read routine */
+    priv->lg_do_sensor = 1;       /* not moved to read routine */
     lg_in_data_index = 0;
-    printk(KERN_INFO "\nDODARKSENS, ctrl2 flags %x",priv->lg_ctrl2_store);
-    hrtimer_start(&priv->lg_timer, ktime_set(0, priv->poll_frequency), HRTIMER_MODE_REL);
     break;
   case CMDW_QUICKCHECK:
-    lg_state    = LGSTATE_DISPLAY;
-    hrtimer_start(&priv->lg_timer, ktime_set(0, priv->poll_frequency), HRTIMER_MODE_REL);
+    priv->lg_state    = LGSTATE_DISPLAY;
+    priv->lg_ctrl2_store |= LASERENABLE;
     break;
   case CMDW_SETDELTA:
     if (p_cmd_data->base.length != sizeof(struct lg_xydata))
       return(-EINVAL);
-    memcpy((char *)&lg_delta, (char *)&p_cmd_data->base.xydata, sizeof(struct lg_xydata)); 
+    memcpy((char *)&priv->lg_delta, (char *)&p_cmd_data->base.xydata, sizeof(struct lg_xydata)); 
     break;
   case CMDW_GOANGLE:
     if (p_cmd_data->base.length != sizeof(struct lg_xydata))
       return(-EINVAL);
 
     /* Disable LGDISPLAY mode, only writing 1 set of coords here */
-    lg_state = LGSTATE_IDLE;
-    lg_save.xdata = p_cmd_data->base.xydata.xdata;
-    lg_save.ydata = p_cmd_data->base.xydata.ydata;
-    lg_save.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
+    priv->lg_save.xdata = p_cmd_data->base.xydata.xdata;
+    priv->lg_save.ydata = p_cmd_data->base.xydata.ydata;
+    priv->lg_save.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
     lg_write_io_to_dac(priv, (struct lg_xydata *)&p_cmd_data->base.xydata);
     break;
   case CMDW_SETROI:
@@ -295,12 +295,10 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     break;
   case CMDW_SEARCHBEAMON:
     priv->lg_ctrl2_store |= BRIGHTBEAM;
-    printk(KERN_CRIT "\nBRIGHT: ctrl2 settings %x",priv->lg_ctrl2_store);
     outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
     break;
   case CMDW_SEARCHBEAMOFF:
     priv->lg_ctrl2_store &= DIMBEAM;
-    printk(KERN_CRIT "\nDIM: ctrl2 settings %x",priv->lg_ctrl2_store);
     outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
     break;
   case CMDW_LINKLEDOFF:
@@ -388,7 +386,9 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
     }
 
   // Set state to IDLE mode so timer event will stop display
-  lg_state = LGSTATE_IDLE;
+  // Should not be trying to continue writing from lg_out_data
+  // when reloading it!
+  priv->lg_state = LGSTATE_IDLE;
   // Clear out old display data
   memset((char *)&lg_out_data, 0, sizeof(lg_out_data));
   // Write new display data
@@ -414,7 +414,7 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
 * lg_read()                                       *
 * Description:   This function is used to process *
 *                read commands.  Either a buffer  *
-*                of data (diode_word) is sent     *
+*                of data (tgfind_word) is sent    *
 *                back to user.                    *
 *                                                 *
 **************************************************/
@@ -429,19 +429,16 @@ ssize_t lg_read(struct file *file, char __user * buffer
     return(-EBADF);
     
   if (count<=0) return -EINVAL;
-  if (count > MAX_DIODE_BUFFER)
+  if (count > MAX_TGFIND_BUFFER)
     return(-ENOMEM);
-  if (lg_state == LGSTATE_DOSENS)
-    return(-EAGAIN);
-  if (lg_state <= LGSTATE_DISPLAY)
+  if (priv->lg_state == LGSTATE_DISPLAY)
     return(-EBUSY);
-  if (lg_state != LGSTATE_TGFIND)
-    return(-EIO); 
+
+  printk(KERN_INFO "\nlg_read: Current State %d",priv->lg_state);
 
   /* sensor scan has been done */
-  if (copy_to_user((void *)buffer, (void *)diode_word, (uint32_t)count))
+  if (copy_to_user((void *)buffer, (void *)tgfind_word, (uint32_t)count))
     return -EFAULT;    
-  lg_state = LGSTATE_IDLE;    /* reset to IDLE state */
   return count;
 }
 
@@ -459,16 +456,16 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
 
   switch (cmd) {
   case LGGETANGLE:
-    xydata.xdata = lg_save.xdata;
-    xydata.ydata = lg_save.ydata;
-    xydata.ctrl_flags = lg_save.ctrl_flags;
+    xydata.xdata = priv->lg_save.xdata;
+    xydata.ydata = priv->lg_save.ydata;
+    xydata.ctrl_flags = priv->lg_save.ctrl_flags;
     if (copy_to_user(argp, &xydata, sizeof(struct lg_xydata) ))
       {
 	printk(KERN_ERR "\nAGS-LG:Error occurred for message %x from user",cmd);
         return(-EFAULT);
       }
     // Restart event timer
-    hrtimer_start(&priv->lg_timer, ktime_set(0, priv->poll_frequency), HRTIMER_MODE_REL);
+    printk(KERN_INFO "\nGETANGL: x=%x,y=%x,ctrl=%x,state %d",xydata.xdata,xydata.ydata,xydata.ctrl_flags,priv->lg_state);
     break;
     /* this is a count-down and must be reset each time */
     /*  -1 is reserved for NO quick checks              */
@@ -512,24 +509,21 @@ static long compat_lg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
   return(lg_ioctl(f, cmd, arg));
 }
 
-static enum hrtimer_restart lg_timeout(struct hrtimer *timer)
+static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 {
-  char             time_lg_inbuff[8];
 #if 0
   struct timeval   start_ts;
   struct timeval   end_ts;
 #endif
   struct lg_xydata *xydata;
   struct lg_dev    *priv;
-  uint16_t         lg_sum;
-  uint16_t         lg_00x;
-  uint16_t         lg_x00;
-  uint8_t          tg_find_val;
+  uint8_t          tg_find_val0;
+  uint8_t          tg_find_val1;
   uint8_t          b_optic;
 
   priv = container_of(timer, struct lg_dev, lg_timer);
   if (!priv)
-    return HRTIMER_NORESTART;
+    return HRTIMER_RESTART;
 
   // ACTUAL TIME CYCLE
 #if 0
@@ -565,6 +559,8 @@ static enum hrtimer_restart lg_timeout(struct hrtimer *timer)
    *  laser pulse mode
    *   if flag is on, do this and only this section
    */
+#if 0
+  FIXME---PAH---THIS CODE IS NEVER USED
   if (lg_pulsemodeflag)
     {
       // first, the sanity checks (turn off pulse mode)
@@ -580,34 +576,35 @@ static enum hrtimer_restart lg_timeout(struct hrtimer *timer)
       if ((lg_pulsecounter <= lg_pulseoffvalue) || (lg_pulsecounter <= lg_pulseonvalue))
 	{
 	  printk(KERN_INFO "\nAGS-LG PULSE: xdata %x,ydata %x,ctrl_flags %x",
-		 lg_save.xdata,lg_save.ydata,lg_save.ctrl_flags);
-	  lg_write_io_to_dac(priv, (struct lg_xydata *)&lg_save);
+		 priv->lg_save.xdata,priv->lg_save.ydata,priv->lg_save.ctrl_flags);
+	  lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
 	}
-    else
-      {
-	lg_pulsecounter = 0;
-      }
+      else
+	{
+	  lg_pulsecounter = 0;
+	}
       // Restart timer to continue working on data until user-app suspends work
       hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
       return HRTIMER_RESTART;
-  }
+    }
+#endif
 
-  if (lg_state == LGSTATE_IDLE)
+  if (priv->lg_state == LGSTATE_IDLE)
     {
       // Restart timer to continue working on data until user-app suspends work
       hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
       return HRTIMER_RESTART;
     }
-  else if (lg_state == LGSTATE_DISPLAY)
+  else if (priv->lg_state == LGSTATE_DISPLAY)
     {
       // Check for end of buffer, start over when end is reached
       if ((lg_out_data_index * sizeof(struct lg_xydata)) >= lg_out_data_end)
 	lg_out_data_index = 0;
       xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index++];
-      lg_save.ctrl_flags = xydata->ctrl_flags;
-      lg_save.xdata = xydata->xdata;
-      lg_save.ydata = xydata->ydata;
-      lg_write_io_to_dac(priv, (struct lg_xydata*)&lg_save);
+      priv->lg_save.ctrl_flags = xydata->ctrl_flags;
+      priv->lg_save.xdata = xydata->xdata;
+      priv->lg_save.ydata = xydata->ydata;
+      lg_write_io_to_dac(priv, (struct lg_xydata*)&priv->lg_save);
       
       /* a negative lg_qc_counter will never do a quick check */
       if (lg_qc_counter > 0)
@@ -615,77 +612,39 @@ static enum hrtimer_restart lg_timeout(struct hrtimer *timer)
       else if (lg_qc_counter == 0)
 	{
 	  lg_qc_flag = 1;   /* set the quick check flag */
-	  lg_state = LGSTATE_IDLE;      /*  go into the idle state  */
+	  priv->lg_state = LGSTATE_IDLE;      /*  go into the idle state  */
 	}
-    }
-#if 0
-  // FIXME---PAH---THIS STATE IS NEVER USED!
-  else if (lg_state == 4)
-    {
-      if (lg_in_data_index > 3)
+      if (priv->lg_do_sensor)
 	{
-	  /* stop everything and leave mark */
-	  diode_data[0] = 0xA5;
-	  diode_data[1] = 0x5A;
-	  diode_data[2] = 0xA5;
-	  diode_data[3] = 0x5A;
-	  lg_state = LGSTATE_TGFIND;
-	  priv->lg_dark_search = 0;
-	}
-      else
-	{
-	  // prepare x & Y vals
-	  xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index];
-	  printk(KERN_INFO "\nAGS-LG:  STATE4 X=%d, Y=%d, flags %d",
-		 xydata->xdata,xydata->ydata, xydata->ctrl_flags);
-	  lg_write_io_to_dac(priv, xydata);
-	  printk(KERN_INFO "\nAGS-LG BAD4: DK xdata %x,ydata %x,ctrl_flags %x",
-		 xydata->xdata,xydata->ydata,xydata->ctrl_flags);
-	  diode_data[lg_in_data_index] = inb(LG_IO_CNTRL2);
-	  lg_in_data_index++;   /* increment positions and index */
-	  lg_save.xdata += lg_delta.xdata;
-	  lg_save.ydata += lg_delta.ydata;
-	  lg_save.ctrl_flags = xydata->ctrl_flags;
-	  if (lg_in_data_index >= lg_in_data_end)
-	    {
-	      lg_state = LGSTATE_TGFIND;
-	      priv->lg_dark_search = 0;
-	    }
-	}
-    }
-#endif
-  else if (lg_state == LGSTATE_DOSENS)
-    {
-      // prepare x & Y vals
-      xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index];
-      lg_write_io_to_dac(priv, xydata);
+	  // prepare x & Y vals (stored in GO-ANGLE IN lg_save),
+	  // read back data from target-find ports
+	  // target-find value is 10bit value.  Stuff into buffer for
+	  // later read from user space.
+	  lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
       
-      // Read in data from target-find board
-      tg_find_val = inb(TFPORTRL);
-      time_lg_inbuff[1] = tg_find_val & 0xff;
-      tg_find_val = inb(TFPORTRH);
-      time_lg_inbuff[0] = tg_find_val & 0x03;
-      
-      lg_00x = 0xff & time_lg_inbuff[1];
-      lg_x00 = 0xff & time_lg_inbuff[0];
-      lg_sum = lg_00x + lg_x00 * 0x100 ;
-      
-      printk(KERN_INFO "\nAGS-LG:  DOSENS, writing lg_sum %x to input buffer",
-	     lg_sum);
-      diode_word[lg_in_data_index] = lg_sum;
-      if ( lg_sum < 0xFF )
-	diode_data[lg_in_data_index] = lg_sum & 0xFF;
-      else
-	diode_data[lg_in_data_index] = 0xFF;
+	  // Read in data from target-find board
+	  tg_find_val1 = inb(TFPORTRL);
+	  tg_find_val0 = inb(TFPORTRH) & 0x03;
+	  if (lg_in_data_index > MAX_TGFIND_BUFFER)
+	    lg_in_data_index = 0;
+	  tgfind_word[lg_in_data_index] = (tg_find_val0 << 8) | tg_find_val1;
 
-      lg_in_data_index++;   /* increment positions and index */
-      lg_save.xdata  += lg_delta.xdata;
-      lg_save.ydata  += lg_delta.ydata;
-      lg_save.ctrl_flags = xydata->ctrl_flags;
-      if (lg_in_data_index >= lg_in_data_end)
-	{
-	  lg_state = LGSTATE_TGFIND;
+	  /* increment positions and index.  If at end of buffer,
+	     just restart at beginning, set state back to IDLE */
+	  if (lg_in_data_index < MAX_TGFIND_BUFFER)
+	    lg_in_data_index++;
+	  else
+	    {
+	      lg_in_data_index = 0;
+	      priv->lg_ctrl2_store |= LASERENABLE;
+	    }
+	  if ((priv->lg_save.xdata + priv->lg_delta.xdata) <= XYMAX)
+	    priv->lg_save.xdata  += priv->lg_delta.xdata;
+	  if ((priv->lg_save.ydata + priv->lg_delta.ydata) <= XYMAX)
+	    priv->lg_save.ydata  += priv->lg_delta.ydata;
+	  priv->lg_do_sensor = 0;
 	  priv->lg_dark_search = 0;
+	  priv->lg_ctrl2_store |= LASERENABLE;
 	}
     }
 #if 0
@@ -773,7 +732,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   // DEFAULT event timer poll frequency is 75 usec
   lg_devp->poll_frequency = KETIMER_75U * 3000;
   hrtimer_init(&lg_devp->lg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-  lg_devp->lg_timer.function = lg_timeout;
+  lg_devp->lg_timer.function = lg2_evt_hdlr;
   hrtimer_start(&lg_devp->lg_timer, ktime_set(0, lg_devp->poll_frequency), HRTIMER_MODE_REL);
   do_gettimeofday(&lg_devp->last_ts);
   
@@ -782,18 +741,18 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   lg_write_io_to_dac(lg_devp, &xydata);
 
   // Initialize save, delta, & all buffers to 0
-  memset((char *)&lg_save, 0, sizeof(struct lg_xydata));
-  memset((char *)&lg_delta, 0, sizeof(struct lg_xydata));
   memset((char *)&lg_out_data, 0, sizeof(lg_out_data));
-  memset((char *)&diode_word, 0, sizeof(diode_word));
-  memset((char *)&diode_data, 0, sizeof(diode_data));
+  memset((char *)&tgfind_word, 0, sizeof(tgfind_word));
+
+  // Start in idle state so timer handler does nothing
+  lg_devp->lg_state = LGSTATE_IDLE;
   
+  // Start with READY-LED ON TO INDICATE NOT READY TO RUN.
+  lg_devp->lg_ctrl2_store = RDYLEDON;
+  outb(lg_devp->lg_ctrl2_store, LG_IO_CNTRL2);
+
   // All initialization done, so enable timer
   printk(KERN_INFO "\nAGS-LG:Laser Guide miscdevice installed, timer created.\n");
-  // 
-  lg_devp->lg_ctrl2_store = RDYLEDON;
-  printk(KERN_CRIT "\nINIT ctrl2 settings %x",lg_devp->lg_ctrl2_store);
-  outb(lg_devp->lg_ctrl2_store, LG_IO_CNTRL2);
   return(0);
 }
 static struct platform_device lg_dev = {
