@@ -28,6 +28,7 @@
 #define  BEAMONISSET    0x1
 #define  BEAMONNOTSET   0xFE
 #define  LASERENBISSET  0x2
+#define  LASERENBNOTSET  0xFD
 #define  BRIGHTBEAMISSET 0x4
 #define  BRIGHTBEAMNOTSET 0xFB
 
@@ -103,6 +104,16 @@ typedef enum{
 #define   MAX_LG_BUFFER    0x80000  /* maximum size of lg_data[] */
 #define   MAX_DIODE_BUFFER 0x10000  /* maximum number of diode readings */
 #define   DO_TEST_DISPLAY  0x1      // USED BY DIAGS.  Will simulate DISPLAY mode
+struct hobbs_ctrs {
+  time_t    hobbs_time;
+  time_t    xscanner_time;
+  time_t    yscanner_time;
+  time_t    laser_time;
+};
+struct event_times {
+  time_t    last_gap_usec;    // Used to track time between lg_timer events from user side
+  time_t    last_exec_usec;   // Used to track execution time from user side
+};
 struct lg_xydata {
   uint8_t   ctrl_flags;
   char      unused1;
@@ -143,9 +154,11 @@ struct cmd_rw {
 
 /* the following are ioctl commands following the linux convention */
 #define LG_IOCNUM  0xE1
-#define   LGGETANGLE    _IOR(LG_IOCNUM, 0xA2, struct lg_xydata)
-#define   LGGETQCFLAG    _IOR(LG_IOCNUM, 0xB5, unsigned int)
+#define   LGGETANGLE      _IOR(LG_IOCNUM, 0xA2, struct lg_xydata)
+#define   LGGETQCFLAG     _IOR(LG_IOCNUM, 0xB5, unsigned int)
 #define   LGGETQCCOUNTER  _IOR(LG_IOCNUM, 0xB7, unsigned int)
-#define   LGGETCTL2STAT  _IOR(LG_IOCNUM, 0xB8, unsigned int)
+#define   LGGETCTL2STAT   _IOR(LG_IOCNUM, 0xB8, unsigned int)
+#define   LGGETEVENTTIMES _IOR(LG_IOCNUM, 0xB9, struct event_times)
+#define   LGGETHOBBSTIMES _IOR(LG_IOCNUM, 0xB9, struct hobbs_ctrs)
 
 #endif  /*  _LASERIOCTL_H  */

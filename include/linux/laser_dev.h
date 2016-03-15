@@ -2,7 +2,9 @@
 #define _LASERDEV_H
 /*     specific changes for the laserguide system  */
 
-/* NOTE1:  lg_out_data is 16-bit values so that outw can move data out ASAP */
+/* NOTE1:  lg_out_data is an array of XY and control-flag data.  X & Y MUST */
+/*         use OUTB and even-based byte (high byte) MUST be last because data */
+/*         is clocked into DAC on that byte write.  */
 /* NOTE2:  LTC1597 spec calls for bipolar 16 bit values to produce correct  */
 /*         +/- VREF output voltages. Refer to LTC1597 Data sheet, "Bipolar  */
 /*         Offset Binary Code Table" for details.  */     
