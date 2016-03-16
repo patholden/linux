@@ -512,148 +512,150 @@ static long compat_lg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 {
 #if 0
-  struct timeval   start_ts;
-  struct timeval   end_ts;
+    struct timeval   start_ts;
+    struct timeval   end_ts;
 #endif
-  struct lg_xydata *xydata;
-  struct lg_dev    *priv;
-  uint8_t          tg_find_val0;
-  uint8_t          tg_find_val1;
-  uint8_t          b_optic;
+    struct lg_xydata *xydata;
+    struct lg_dev    *priv;
+    uint8_t          tg_find_val0;
+    uint8_t          tg_find_val1;
+    uint8_t          b_optic;
 
-  priv = container_of(timer, struct lg_dev, lg_timer);
-  if (!priv)
-    return HRTIMER_RESTART;
+    priv = container_of(timer, struct lg_dev, lg_timer);
+    if (!priv)
+      return HRTIMER_RESTART;
 
-  // ACTUAL TIME CYCLE
+    // ACTUAL TIME CYCLE
 #if 0
-  do_gettimeofday(&start_ts);
-  priv->last_events.last_gap_usec = start_ts.tv_usec - priv->last_ts.tv_usec;
-  memcpy((void *)&priv->last_ts, (void *)&start_ts, sizeof(struct timeval));
+    do_gettimeofday(&start_ts);
+    priv->last_events.last_gap_usec = start_ts.tv_usec - priv->last_ts.tv_usec;
+    memcpy((void *)&priv->last_ts, (void *)&start_ts, sizeof(struct timeval));
 #endif
   
-  // Start of actual event handler
-  //  Check CHDR and, if need be, change shutter state
-  b_optic = inb(LG_IO_CNTRL2);
-  if (b_optic & CDRHBITMASK)
-    {
-      if (lg_shutter_open == 0)
-	{
-	  priv->lg_ctrl2_store |= LASERENABLE;
-	  printk(KERN_CRIT "\nTIMER1: ctrl2 settings %x",priv->lg_ctrl2_store);
-	  outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
-	}
-      lg_shutter_open = 1;
-    }
-  else
-    {
-      if (lg_shutter_open == 1)
-	{
-	  priv->lg_ctrl2_store &= LASERDISABLE;
-	  printk(KERN_CRIT "\nTIMER2: ctrl2 settings %x",priv->lg_ctrl2_store);
-	  outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
-	}
-      lg_shutter_open = 0;
-    }
-  /*
-   *  laser pulse mode
-   *   if flag is on, do this and only this section
-   */
+    // Start of actual event handler
+    //  Check CHDR and, if need be, change shutter state
+    b_optic = inb(LG_IO_CNTRL2);
+    if (b_optic & CDRHBITMASK)
+      {
+	if (lg_shutter_open == 0)
+	  {
+	    priv->lg_ctrl2_store |= LASERENABLE;
+	    printk(KERN_CRIT "\nTIMER1: ctrl2 settings %x",priv->lg_ctrl2_store);
+	    outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+	  }
+	lg_shutter_open = 1;
+      }
+    else
+      {
+	if (lg_shutter_open == 1)
+	  {
+	    priv->lg_ctrl2_store &= LASERDISABLE;
+	    printk(KERN_CRIT "\nTIMER2: ctrl2 settings %x",priv->lg_ctrl2_store);
+	    outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+	  }
+	lg_shutter_open = 0;
+      }
+    /*
+     *  laser pulse mode
+     *   if flag is on, do this and only this section
+     */
 #if 0
-  FIXME---PAH---THIS CODE IS NEVER USED
-  if (lg_pulsemodeflag)
-    {
-      // first, the sanity checks (turn off pulse mode)
-      if ( lg_pulsecounter  > 16384 )  { lg_pulsemodeflag = 0; }
-      if ( lg_pulsecounter  <     0 )  { lg_pulsemodeflag = 0; }
-      if ( lg_pulseonvalue  > 16384 )  { lg_pulsemodeflag = 0; }
-      if ( lg_pulseonvalue  <     0 )  { lg_pulsemodeflag = 0; }
-      if ( lg_pulseoffvalue > 16384 )  { lg_pulsemodeflag = 0; }
-      if ( lg_pulseoffvalue <     0 )  { lg_pulsemodeflag = 0; }
+    FIXME---PAH---THIS CODE IS NEVER USED
+      if (lg_pulsemodeflag)
+	{
+	  // first, the sanity checks (turn off pulse mode)
+	  if ( lg_pulsecounter  > 16384 )  { lg_pulsemodeflag = 0; }
+	  if ( lg_pulsecounter  <     0 )  { lg_pulsemodeflag = 0; }
+	  if ( lg_pulseonvalue  > 16384 )  { lg_pulsemodeflag = 0; }
+	  if ( lg_pulseonvalue  <     0 )  { lg_pulsemodeflag = 0; }
+	  if ( lg_pulseoffvalue > 16384 )  { lg_pulsemodeflag = 0; }
+	  if ( lg_pulseoffvalue <     0 )  { lg_pulsemodeflag = 0; }
 
-      // Now get to the business of turning the beam on and off
-      lg_pulsecounter++;
-      if ((lg_pulsecounter <= lg_pulseoffvalue) || (lg_pulsecounter <= lg_pulseonvalue))
-	{
-	  printk(KERN_INFO "\nAGS-LG PULSE: xdata %x,ydata %x,ctrl_flags %x",
-		 priv->lg_save.xdata,priv->lg_save.ydata,priv->lg_save.ctrl_flags);
-	  lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
-	}
-      else
-	{
-	  lg_pulsecounter = 0;
-	}
-      // Restart timer to continue working on data until user-app suspends work
-      hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
-      return HRTIMER_RESTART;
-    }
-#endif
-
-  if (priv->lg_state == LGSTATE_IDLE)
-    {
-      // Restart timer to continue working on data until user-app suspends work
-      hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
-      return HRTIMER_RESTART;
-    }
-  else if (priv->lg_state == LGSTATE_DISPLAY)
-    {
-      // Check for end of buffer, start over when end is reached
-      if ((lg_out_data_index * sizeof(struct lg_xydata)) >= lg_out_data_end)
-	lg_out_data_index = 0;
-      xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index++];
-      priv->lg_save.ctrl_flags = xydata->ctrl_flags;
-      priv->lg_save.xdata = xydata->xdata;
-      priv->lg_save.ydata = xydata->ydata;
-      lg_write_io_to_dac(priv, (struct lg_xydata*)&priv->lg_save);
-      
-      /* a negative lg_qc_counter will never do a quick check */
-      if (lg_qc_counter > 0)
-	lg_qc_counter--;   /* decrement counter */
-      else if (lg_qc_counter == 0)
-	{
-	  lg_qc_flag = 1;   /* set the quick check flag */
-	  priv->lg_state = LGSTATE_IDLE;      /*  go into the idle state  */
-	}
-      if (priv->lg_do_sensor)
-	{
-	  // prepare x & Y vals (stored in GO-ANGLE IN lg_save),
-	  // read back data from target-find ports
-	  // target-find value is 10bit value.  Stuff into buffer for
-	  // later read from user space.
-	  lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
-      
-	  // Read in data from target-find board
-	  tg_find_val1 = inb(TFPORTRL);
-	  tg_find_val0 = inb(TFPORTRH) & 0x03;
-	  if (lg_in_data_index > MAX_TGFIND_BUFFER)
-	    lg_in_data_index = 0;
-	  tgfind_word[lg_in_data_index] = (tg_find_val0 << 8) | tg_find_val1;
-
-	  /* increment positions and index.  If at end of buffer,
-	     just restart at beginning, set state back to IDLE */
-	  if (lg_in_data_index < MAX_TGFIND_BUFFER)
-	    lg_in_data_index++;
+	  // Now get to the business of turning the beam on and off
+	  lg_pulsecounter++;
+	  if ((lg_pulsecounter <= lg_pulseoffvalue) || (lg_pulsecounter <= lg_pulseonvalue))
+	    {
+	      printk(KERN_INFO "\nAGS-LG PULSE: xdata %x,ydata %x,ctrl_flags %x",
+		     priv->lg_save.xdata,priv->lg_save.ydata,priv->lg_save.ctrl_flags);
+	      lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
+	    }
 	  else
 	    {
-	      lg_in_data_index = 0;
-	      priv->lg_ctrl2_store |= LASERENABLE;
+	      lg_pulsecounter = 0;
 	    }
-	  if ((priv->lg_save.xdata + priv->lg_delta.xdata) <= XYMAX)
-	    priv->lg_save.xdata  += priv->lg_delta.xdata;
-	  if ((priv->lg_save.ydata + priv->lg_delta.ydata) <= XYMAX)
-	    priv->lg_save.ydata  += priv->lg_delta.ydata;
-	  priv->lg_do_sensor = 0;
-	  priv->lg_dark_search = 0;
-	  priv->lg_ctrl2_store |= LASERENABLE;
+	  // Restart timer to continue working on data until user-app suspends work
+	  hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
+	  return(HRTIMER_RESTART);
 	}
-    }
-#if 0
-  do_gettimeofday(&end_ts);
-  priv->last_events.last_exec_usec = end_ts.tv_usec - start_ts.tv_usec;
 #endif
-  // Restart timer to continue working on data until user-app suspends work
-  hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
-  return HRTIMER_RESTART;
+
+    if (priv->lg_do_sensor)
+      {
+	// prepare x & Y vals (stored in GO-ANGLE IN lg_save),
+	// read back data from target-find ports
+	// target-find value is 10bit value.  Stuff into buffer for
+	// later read from user space.
+	lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
+	
+	// Read in data from target-find board
+	tg_find_val1 = inb(TFPORTRL);
+	tg_find_val0 = inb(TFPORTRH) & 0x03;
+	if (lg_in_data_index > MAX_TGFIND_BUFFER)
+	  lg_in_data_index = 0;
+	tgfind_word[lg_in_data_index] = (tg_find_val0 << 8) | tg_find_val1;
+
+	// increment positions and index.  If at end of buffer,
+	// just reset index back to beginning
+	if (lg_in_data_index < MAX_TGFIND_BUFFER)
+	  lg_in_data_index++;
+	else
+	  {
+	    lg_in_data_index = 0;
+	    priv->lg_ctrl2_store |= LASERENABLE;
+	  }
+	if ((priv->lg_save.xdata + priv->lg_delta.xdata) <= XYMAX)
+	  priv->lg_save.xdata  += priv->lg_delta.xdata;
+	if ((priv->lg_save.ydata + priv->lg_delta.ydata) <= XYMAX)
+	  priv->lg_save.ydata  += priv->lg_delta.ydata;
+	priv->lg_do_sensor = 0;
+	priv->lg_dark_search = 0;
+	priv->lg_ctrl2_store |= LASERENABLE;
+      }
+
+    // Check for display mode
+    if (priv->lg_state == LGSTATE_IDLE)
+      {
+	// Restart timer to continue working on data until user-app suspends work
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
+	return(HRTIMER_RESTART);
+      }
+    else
+      {
+	// Check for end of buffer, start over when end is reached
+	if ((lg_out_data_index * sizeof(struct lg_xydata)) >= lg_out_data_end)
+	  lg_out_data_index = 0;
+	xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index++];
+	priv->lg_save.ctrl_flags = xydata->ctrl_flags;
+	priv->lg_save.xdata = xydata->xdata;
+	priv->lg_save.ydata = xydata->ydata;
+	lg_write_io_to_dac(priv, (struct lg_xydata*)&priv->lg_save);
+      
+	/* a negative lg_qc_counter will never do a quick check */
+	if (lg_qc_counter > 0)
+	  lg_qc_counter--;   /* decrement counter */
+	else if (lg_qc_counter == 0)
+	  {
+	    lg_qc_flag = 1;   /* set the quick check flag */
+	    priv->lg_state = LGSTATE_IDLE;      /*  go into the idle state  */
+	  }
+      }
+#if 0
+    do_gettimeofday(&end_ts);
+    priv->last_events.last_exec_usec = end_ts.tv_usec - start_ts.tv_usec;
+#endif
+    // Restart timer to continue working on data until user-app suspends work
+    hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
+    return(HRTIMER_RESTART);
 }
 static const struct file_operations lg_fops = {
   .owner	    = THIS_MODULE,
@@ -728,8 +730,9 @@ static int lg_dev_probe(struct platform_device *plat_dev)
       return(-EBUSY);
     }
   
-  // Set up the event timer but don't start it yet(hrtimer_cancel()) stops it.
-  // DEFAULT event timer poll frequency is 75 usec
+  // DEFAULT event timer poll frequency is 75 usec, but need to
+  // increase by 3000 instead of 1000 to get timing right for new
+  // laservision product.
   lg_devp->poll_frequency = KETIMER_75U * 3000;
   hrtimer_init(&lg_devp->lg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
   lg_devp->lg_timer.function = lg2_evt_hdlr;
@@ -780,6 +783,7 @@ static int lg_pdev_remove(struct platform_device *pdev)
     return(-EBADF);
 
   this_device = lg_devp->miscdev.this_device;
+  hrtimer_cancel(&lg_devp->lg_timer);
   release_region(LG_BASE, LASER_REGION);
   misc_deregister(&lg_devp->miscdev);
   kfree(lg_devp);
