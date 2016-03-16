@@ -233,7 +233,9 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
   case CMDW_SETDELTA:
     if (p_cmd_data->base.length != sizeof(struct lg_xydata))
       return(-EINVAL);
-    memcpy((char *)&priv->lg_delta, (char *)&p_cmd_data->base.xydata, sizeof(struct lg_xydata)); 
+    memcpy((char *)&priv->lg_delta, (char *)&p_cmd_data->base.xydata, sizeof(struct lg_xydata));
+    printk(KERN_INFO "\nSETDELTA: XY x=%x,y=%x,ctrl=%x,state %d",priv->lg_delta.xdata,priv->lg_delta.ydata,priv->lg_delta.ctrl_flags,priv->lg_state);
+    
     break;
   case CMDW_GOANGLE:
     if (p_cmd_data->base.length != sizeof(struct lg_xydata))
@@ -243,7 +245,8 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     priv->lg_save.xdata = p_cmd_data->base.xydata.xdata;
     priv->lg_save.ydata = p_cmd_data->base.xydata.ydata;
     priv->lg_save.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
-    lg_write_io_to_dac(priv, (struct lg_xydata *)&p_cmd_data->base.xydata);
+    lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
+    printk(KERN_INFO "\nGOANGL: Writing XY x=%x,y=%x,ctrl=%x,state %d",priv->lg_save.xdata,priv->lg_save.ydata,priv->lg_save.ctrl_flags,priv->lg_state);
     break;
   case CMDW_SETROI:
     if (p_cmd_data->base.length != sizeof(uint32_t))
@@ -464,7 +467,6 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
 	printk(KERN_ERR "\nAGS-LG:Error occurred for message %x from user",cmd);
         return(-EFAULT);
       }
-    // Restart event timer
     printk(KERN_INFO "\nGETANGL: x=%x,y=%x,ctrl=%x,state %d",xydata.xdata,xydata.ydata,xydata.ctrl_flags,priv->lg_state);
     break;
     /* this is a count-down and must be reset each time */
