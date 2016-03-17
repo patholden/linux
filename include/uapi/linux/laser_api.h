@@ -9,7 +9,6 @@
 #define KETIMER_75U    75           // Sets timer to approx 75usec(default)
 #define KETIMER_100U  100           // Sets timer to approx 100usec
 #define KETIMER_150U  100           // Sets timer to approx 150usec
-#define XYMAX         0x7FFF        // XY vals can't exceed 0x7FFF for DAC.
 
 /*  IO addresses */
 //NOTE: 0x380 & 0x390 are reserved for X86 PIC

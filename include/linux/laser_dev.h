@@ -25,9 +25,9 @@
 // Max # devices allowed for laser (only 1 is initialized right now)
 #define LG_NUM_DEVICES   256
 #define LTC1597_BIPOLAR_OFFSET_MAX   0xFFFF
-#define LTC1597_BIPOLAR_OFFSET_ZERO  0x8000
 #define LTC1597_BIPOLAR_OFFSET_PLUS  0x8000
 #define LTC1597_BIPOLAR_OFFSET_NEG   0x7FFF
+#define LTC1597_BIPOLAR_MAX          0x7FFF
 #define LTC1597_BIPOLAR_MAX_INP_VAL1 0x7FFF
 #define LTC1597_BIPOLAR_MAX_INP_VAL2 0x8000
 

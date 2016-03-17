@@ -51,6 +51,7 @@ struct lg_dev {
   struct timeval          last_ts;
   struct event_times      last_events;     // Used to track timing of lg2_evt_hdlr
   struct lg_xydata        lg_save;
+  struct lg_xydata        lg_goangle;
   struct lg_xydata        lg_delta;
   uint32_t                lg_state;
   uint32_t                lg_do_sensor;
@@ -97,7 +98,7 @@ static int lg_dev_probe(struct platform_device *dev);
 static void lg_get_xydata_ltcval(int16_t *output_val, int16_t input_val)
 {
   if (!input_val)
-    *output_val = LTC1597_BIPOLAR_OFFSET_ZERO;
+    *output_val = LTC1597_BIPOLAR_OFFSET_PLUS;
   else if ((input_val == LTC1597_BIPOLAR_MAX_INP_VAL1)
 	   || (input_val == LTC1597_BIPOLAR_MAX_INP_VAL2))
     *output_val = LTC1597_BIPOLAR_OFFSET_MAX;
@@ -242,11 +243,11 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
       return(-EINVAL);
 
     /* Disable LGDISPLAY mode, only writing 1 set of coords here */
-    priv->lg_save.xdata = p_cmd_data->base.xydata.xdata;
-    priv->lg_save.ydata = p_cmd_data->base.xydata.ydata;
-    priv->lg_save.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
-    lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
-    printk(KERN_INFO "\nGOANGL: Writing XY x=%x,y=%x,ctrl=%x,state %d",priv->lg_save.xdata,priv->lg_save.ydata,priv->lg_save.ctrl_flags,priv->lg_state);
+    priv->lg_goangle.xdata = p_cmd_data->base.xydata.xdata & LTC1597_BIPOLAR_MAX;
+    priv->lg_goangle.ydata = p_cmd_data->base.xydata.ydata & LTC1597_BIPOLAR_MAX;
+    priv->lg_goangle.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
+    lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_goangle);
+    printk(KERN_INFO "\nGOANGL: Writing XY x=%x,y=%x,ctrl=%x,state %d",priv->lg_goangle.xdata,priv->lg_goangle.ydata,priv->lg_goangle.ctrl_flags,priv->lg_state);
     break;
   case CMDW_SETROI:
     if (p_cmd_data->base.length != sizeof(uint32_t))
@@ -593,11 +594,15 @@ static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 
     if (priv->lg_do_sensor)
       {
-	// prepare x & Y vals (stored in GO-ANGLE IN lg_save),
+	// prepare x & Y vals (stored in GO-ANGLE IN lg_goangle),
 	// read back data from target-find ports
 	// target-find value is 10bit value.  Stuff into buffer for
 	// later read from user space.
-	lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
+	lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_goangle);
+	// Save XY for later use
+	priv->lg_save.ctrl_flags = priv->lg_goangle.ctrl_flags;
+	priv->lg_save.xdata = priv->lg_goangle.xdata & LTC1597_BIPOLAR_MAX;
+	priv->lg_save.ydata = priv->lg_goangle.ydata & LTC1597_BIPOLAR_MAX;
 	
 	// Read in data from target-find board
 	tg_find_val1 = inb(TFPORTRL);
@@ -615,10 +620,14 @@ static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 	    lg_in_data_index = 0;
 	    priv->lg_ctrl2_store |= LASERENABLE;
 	  }
-	if ((priv->lg_save.xdata + priv->lg_delta.xdata) <= XYMAX)
-	  priv->lg_save.xdata  += priv->lg_delta.xdata;
-	if ((priv->lg_save.ydata + priv->lg_delta.ydata) <= XYMAX)
-	  priv->lg_save.ydata  += priv->lg_delta.ydata;
+	if ((priv->lg_goangle.xdata + priv->lg_delta.xdata) < LTC1597_BIPOLAR_MAX)
+	  priv->lg_goangle.xdata  += priv->lg_delta.xdata;
+	else
+	  priv->lg_goangle.xdata = LTC1597_BIPOLAR_MAX;
+	if ((priv->lg_goangle.ydata + priv->lg_delta.ydata) < LTC1597_BIPOLAR_MAX)
+	  priv->lg_goangle.ydata  += priv->lg_delta.ydata;
+	else
+	  priv->lg_goangle.ydata = LTC1597_BIPOLAR_MAX;
 	priv->lg_do_sensor = 0;
 	priv->lg_dark_search = 0;
 	priv->lg_ctrl2_store |= LASERENABLE;
@@ -633,15 +642,18 @@ static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
       }
     else
       {
+	// If not idle, has to be LGSTATE_DISPLAY
 	// Check for end of buffer, start over when end is reached
 	if ((lg_out_data_index * sizeof(struct lg_xydata)) >= lg_out_data_end)
 	  lg_out_data_index = 0;
 	xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index++];
+	lg_write_io_to_dac(priv, xydata);
+#if 0
+	// Save XY for later use
 	priv->lg_save.ctrl_flags = xydata->ctrl_flags;
-	priv->lg_save.xdata = xydata->xdata;
-	priv->lg_save.ydata = xydata->ydata;
-	lg_write_io_to_dac(priv, (struct lg_xydata*)&priv->lg_save);
-      
+	priv->lg_save.xdata = xydata->xdata & LTC1597_BIPOLAR_MAX;
+	priv->lg_save.ydata = xydata->ydata & LTC1597_BIPOLAR_MAX;
+#endif
 	/* a negative lg_qc_counter will never do a quick check */
 	if (lg_qc_counter > 0)
 	  lg_qc_counter--;   /* decrement counter */
