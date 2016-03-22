@@ -121,6 +121,10 @@ struct lg_xydata {
   char      unused3;
   int16_t   ydata;     // Needs to be signed to deal with LTC1597 bipolar data
 };
+struct lg_xydelta {
+  int16_t   xdata;
+  int16_t   ydata;
+};
 struct lg_val16 {
   uint16_t   val16;
   uint16_t   pad2;
@@ -142,6 +146,7 @@ struct cmd_rw_base {
     struct lg_val32 dat32;
     struct lg_val64 dat64;
     struct lg_xydata xydata;
+    struct lg_xydelta xydelta;
   };
 };
 #define   MAX_XYPOINTS    MAX_LG_BUFFER/sizeof(struct lg_xydata)
@@ -159,5 +164,6 @@ struct cmd_rw {
 #define   LGGETCTL2STAT   _IOR(LG_IOCNUM, 0xB8, unsigned int)
 #define   LGGETEVENTTIMES _IOR(LG_IOCNUM, 0xB9, struct event_times)
 #define   LGGETHOBBSTIMES _IOR(LG_IOCNUM, 0xB9, struct hobbs_ctrs)
+
 
 #endif  /*  _LASERIOCTL_H  */

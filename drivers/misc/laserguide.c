@@ -49,12 +49,11 @@ struct lg_dev {
   // Start of actual lg private data
   struct hrtimer          lg_timer;
   struct timeval          last_ts;
-  struct event_times      last_events;     // Used to track timing of lg2_evt_hdlr
-  struct lg_xydata        lg_save;
+  struct event_times      last_events;     // Used to track timing of lg_evt_hdlr
+  struct lg_xydata        lg_lastxy;
   struct lg_xydata        lg_goangle;
-  struct lg_xydata        lg_delta;
+  struct lg_xydelta       lg_delta;
   uint32_t                lg_state;
-  uint32_t                lg_do_sensor;
   uint32_t                poll_frequency;    // Adjusted to nsec in CMDW_SETCLOCK
   uint32_t                lg_dark_search;    // This will force laser off to avoid "ghost" traces
   uint8_t                 lg_ctrl2_store;    // Control byte 2 settings
@@ -89,7 +88,7 @@ uint8_t lg_threshold = 0;
 #define UCOUNT   500
 
 // STATIC FUNCTION PROTOTYPES
-static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer);
+static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer);
 static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDevXYData);
 static int lg_pdev_remove(struct platform_device *pdev);
 static int lg_dev_probe(struct platform_device *dev);
@@ -131,7 +130,7 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
   // LASER check. dark search takes precedence.
   // if set, shut laser off.  otherwise check
   // values in XY pair & set accordingly
-  if (priv->lg_dark_search)
+  if ((priv->lg_state == LGSTATE_SENSE) && (priv->lg_dark_search))
     priv->lg_ctrl2_store &= LASERDISABLE;
   else
     {
@@ -149,6 +148,12 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
   // Adjust XY data for producing correct LTC1597 output voltage to DAC
   lg_get_xydata_ltcval((int16_t *)&dac_xval, pDevXYData->xdata);
   lg_get_xydata_ltcval((int16_t *)&dac_yval, pDevXYData->ydata);
+  if ((dac_xval == 0) || (dac_yval == 0))
+    {
+      // Don't allow faults
+      printk(KERN_CRIT "\nBAD INPUT DATA x=%x,y=%x,index=%d",pDevXYData->xdata,pDevXYData->ydata, lg_out_data_index);
+      return;
+    }
  // Write XY data, data is applied to DAC input after lo byte is written
   // so sequence is important.  hi byte then lo byte.
   // udelay is here for adhering to timing spec of DAC chips
@@ -178,8 +183,8 @@ int lg_release(struct inode *_inode, struct file *f)
 
 static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
 {
-  struct lg_xydata  xy_data;
-
+  struct lg_xydata  xydata;
+  
   if (!priv)
     return(-ENODEV);
 
@@ -191,9 +196,14 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     break;
   case CMDW_STOP:
     priv->lg_state = LGSTATE_IDLE;
-    priv->lg_do_sensor = 0;
-    memset((char *)&xy_data, 0, sizeof(struct lg_xydata));
-    lg_write_io_to_dac(priv, (struct lg_xydata *)&xy_data);
+    // Shut beam off
+    priv->lg_ctrl2_store &= LASERDISABLE;
+    outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+    /* move to 0,0 position */
+    memset((char *)&xydata, 0, sizeof(struct lg_xydata));
+    memset((char *)&priv->lg_delta, 0, sizeof(struct lg_xydelta));
+    memset((char *)&priv->lg_lastxy, 0, sizeof(struct lg_xydata));
+    lg_write_io_to_dac(priv, &xydata);
     break;
 #if 0
     //FIXME---PAH---THIS IS NEVER USED
@@ -217,14 +227,14 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     lg_roi_dwell = 6;
     break;
   case CMDW_DOSENSOR:  /* everything should be set up before this */
+    priv->lg_state    = LGSTATE_SENSE;
     priv->lg_dark_search = 0;
-    priv->lg_do_sensor = 1;
     priv->lg_ctrl2_store |= LASERENABLE; 
     lg_in_data_index = 0;
     break;
   case CMDW_DODARKSENS:  /* everything should be set up before this */
+    priv->lg_state    = LGSTATE_SENSE;
     priv->lg_dark_search = 1;
-    priv->lg_do_sensor = 1;       /* not moved to read routine */
     lg_in_data_index = 0;
     break;
   case CMDW_QUICKCHECK:
@@ -234,17 +244,17 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
   case CMDW_SETDELTA:
     if (p_cmd_data->base.length != sizeof(struct lg_xydata))
       return(-EINVAL);
-    memcpy((char *)&priv->lg_delta, (char *)&p_cmd_data->base.xydata, sizeof(struct lg_xydata));
-    printk(KERN_INFO "\nSETDELTA: XY x=%x,y=%x,ctrl=%x,state %d",priv->lg_delta.xdata,priv->lg_delta.ydata,priv->lg_delta.ctrl_flags,priv->lg_state);
-    
+    priv->lg_delta.xdata = p_cmd_data->base.xydata.xdata;
+    priv->lg_delta.ydata = p_cmd_data->base.xydata.ydata;
+    printk(KERN_INFO "\nSETDELTA: XY x=%x,y=%x,state %d",priv->lg_delta.xdata,priv->lg_delta.ydata,priv->lg_state);
     break;
   case CMDW_GOANGLE:
     if (p_cmd_data->base.length != sizeof(struct lg_xydata))
       return(-EINVAL);
 
     /* Disable LGDISPLAY mode, only writing 1 set of coords here */
-    priv->lg_goangle.xdata = p_cmd_data->base.xydata.xdata & LTC1597_BIPOLAR_MAX;
-    priv->lg_goangle.ydata = p_cmd_data->base.xydata.ydata & LTC1597_BIPOLAR_MAX;
+    priv->lg_goangle.xdata = p_cmd_data->base.xydata.xdata;
+    priv->lg_goangle.ydata = p_cmd_data->base.xydata.ydata;
     priv->lg_goangle.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
     lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_goangle);
     printk(KERN_INFO "\nGOANGL: Writing XY x=%x,y=%x,ctrl=%x,state %d",priv->lg_goangle.xdata,priv->lg_goangle.ydata,priv->lg_goangle.ctrl_flags,priv->lg_state);
@@ -298,7 +308,7 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
     break;
   case CMDW_SEARCHBEAMON:
-    priv->lg_ctrl2_store |= BRIGHTBEAM;
+    priv->lg_ctrl2_store |= (BRIGHTBEAM | LASERENABLE);
     outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
     break;
   case CMDW_SEARCHBEAMOFF:
@@ -333,6 +343,7 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
   struct cmd_rw    *cmd_data;
   struct lg_xydata *pXYData;
   int              i, rc;
+  uint32_t         old_state;
 
   priv = (struct lg_dev *)file->private_data;
   if (!priv)
@@ -392,6 +403,7 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
   // Set state to IDLE mode so timer event will stop display
   // Should not be trying to continue writing from lg_out_data
   // when reloading it!
+  old_state = priv->lg_state;
   priv->lg_state = LGSTATE_IDLE;
   // Clear out old display data
   memset((char *)&lg_out_data, 0, sizeof(lg_out_data));
@@ -409,6 +421,7 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
 
   lg_out_data_end = cmd_data->base.length;
   lg_out_data_index = 0;
+  priv->lg_state = old_state;
   kfree(cmd_data);
   return(count);
 }
@@ -449,7 +462,6 @@ ssize_t lg_read(struct file *file, char __user * buffer
   /* the messy catch-all driver routine to do all sorts of things */
 long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
 {
-  struct lg_xydata  xydata;
   struct lg_dev     *priv;
   void __user       *argp = (void __user *)arg;
   uint32_t          ctl2_val;
@@ -460,15 +472,12 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
 
   switch (cmd) {
   case LGGETANGLE:
-    xydata.xdata = priv->lg_save.xdata;
-    xydata.ydata = priv->lg_save.ydata;
-    xydata.ctrl_flags = priv->lg_save.ctrl_flags;
-    if (copy_to_user(argp, &xydata, sizeof(struct lg_xydata) ))
+    if (copy_to_user(argp, &priv->lg_lastxy, sizeof(struct lg_xydata) ))
       {
 	printk(KERN_ERR "\nAGS-LG:Error occurred for message %x from user",cmd);
         return(-EFAULT);
       }
-    printk(KERN_INFO "\nGETANGL: x=%x,y=%x,ctrl=%x,state %d",xydata.xdata,xydata.ydata,xydata.ctrl_flags,priv->lg_state);
+    printk(KERN_INFO "\nAGS-LG GETANGL: x=%x,y=%x,ctrl=%x,state %d",priv->lg_lastxy.xdata,priv->lg_lastxy.ydata,priv->lg_lastxy.ctrl_flags,priv->lg_state);
     break;
     /* this is a count-down and must be reset each time */
     /*  -1 is reserved for NO quick checks              */
@@ -512,7 +521,7 @@ static long compat_lg_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
   return(lg_ioctl(f, cmd, arg));
 }
 
-static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
+static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 {
 #if 0
     struct timeval   start_ts;
@@ -579,8 +588,8 @@ static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 	  if ((lg_pulsecounter <= lg_pulseoffvalue) || (lg_pulsecounter <= lg_pulseonvalue))
 	    {
 	      printk(KERN_INFO "\nAGS-LG PULSE: xdata %x,ydata %x,ctrl_flags %x",
-		     priv->lg_save.xdata,priv->lg_save.ydata,priv->lg_save.ctrl_flags);
-	      lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_save);
+		     priv->lg_lastxy.xdata,priv->lg_lastxy.ydata,priv->lg_lastxy.ctrl_flags);
+	      lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_lastxy);
 	    }
 	  else
 	    {
@@ -592,25 +601,24 @@ static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 	}
 #endif
 
-    if (priv->lg_do_sensor)
+    if (priv->lg_state == LGSTATE_SENSE)
       {
 	// prepare x & Y vals (stored in GO-ANGLE IN lg_goangle),
 	// read back data from target-find ports
 	// target-find value is 10bit value.  Stuff into buffer for
 	// later read from user space.
 	lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_goangle);
-	// Save XY for later use
-	priv->lg_save.ctrl_flags = priv->lg_goangle.ctrl_flags;
-	priv->lg_save.xdata = priv->lg_goangle.xdata & LTC1597_BIPOLAR_MAX;
-	priv->lg_save.ydata = priv->lg_goangle.ydata & LTC1597_BIPOLAR_MAX;
-	
+	// Save current XY point
+	priv->lg_lastxy.xdata = priv->lg_goangle.xdata;
+	priv->lg_lastxy.ydata = priv->lg_goangle.ydata;
+	priv->lg_lastxy.ctrl_flags = priv->lg_goangle.ctrl_flags;
 	// Read in data from target-find board
 	tg_find_val1 = inb(TFPORTRL);
 	tg_find_val0 = inb(TFPORTRH) & 0x03;
 	if (lg_in_data_index > MAX_TGFIND_BUFFER)
 	  lg_in_data_index = 0;
 	tgfind_word[lg_in_data_index] = (tg_find_val0 << 8) | tg_find_val1;
-
+	printk(KERN_INFO "\nAGS-LG SENSOR: tg_word %x",tgfind_word[lg_in_data_index]);
 	// increment positions and index.  If at end of buffer,
 	// just reset index back to beginning
 	if (lg_in_data_index < MAX_TGFIND_BUFFER)
@@ -620,40 +628,26 @@ static enum hrtimer_restart lg2_evt_hdlr(struct hrtimer *timer)
 	    lg_in_data_index = 0;
 	    priv->lg_ctrl2_store |= LASERENABLE;
 	  }
-	if ((priv->lg_goangle.xdata + priv->lg_delta.xdata) < LTC1597_BIPOLAR_MAX)
-	  priv->lg_goangle.xdata  += priv->lg_delta.xdata;
-	else
-	  priv->lg_goangle.xdata = LTC1597_BIPOLAR_MAX;
-	if ((priv->lg_goangle.ydata + priv->lg_delta.ydata) < LTC1597_BIPOLAR_MAX)
-	  priv->lg_goangle.ydata  += priv->lg_delta.ydata;
-	else
-	  priv->lg_goangle.ydata = LTC1597_BIPOLAR_MAX;
-	priv->lg_do_sensor = 0;
+	priv->lg_lastxy.xdata = (priv->lg_lastxy.xdata + priv->lg_delta.xdata) & LTC1597_BIPOLAR_MAX;
+	priv->lg_lastxy.ydata = (priv->lg_lastxy.ydata + priv->lg_delta.ydata) & LTC1597_BIPOLAR_MAX;
+	printk(KERN_INFO "\nAGS-LG SENSOR: new last data x=%x,y=%x,ctrl_flags %x,delta x=%x,y=%x",
+	       priv->lg_lastxy.xdata,priv->lg_lastxy.ydata,priv->lg_lastxy.ctrl_flags,priv->lg_delta.xdata,priv->lg_delta.ydata);
+	
 	priv->lg_dark_search = 0;
-	priv->lg_ctrl2_store |= LASERENABLE;
       }
-
-    // Check for display mode
-    if (priv->lg_state == LGSTATE_IDLE)
-      {
-	// Restart timer to continue working on data until user-app suspends work
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
-	return(HRTIMER_RESTART);
-      }
-    else
+    else if (priv->lg_state == LGSTATE_DISPLAY)
       {
 	// If not idle, has to be LGSTATE_DISPLAY
 	// Check for end of buffer, start over when end is reached
 	if ((lg_out_data_index * sizeof(struct lg_xydata)) >= lg_out_data_end)
 	  lg_out_data_index = 0;
-	xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index++];
+	xydata = (struct lg_xydata *)&lg_out_data[lg_out_data_index];
 	lg_write_io_to_dac(priv, xydata);
-#if 0
-	// Save XY for later use
-	priv->lg_save.ctrl_flags = xydata->ctrl_flags;
-	priv->lg_save.xdata = xydata->xdata & LTC1597_BIPOLAR_MAX;
-	priv->lg_save.ydata = xydata->ydata & LTC1597_BIPOLAR_MAX;
-#endif
+	// Save current XY point
+	priv->lg_lastxy.xdata = xydata->xdata;
+	priv->lg_lastxy.ydata = xydata->ydata;
+	priv->lg_lastxy.ctrl_flags = xydata->ctrl_flags;
+	lg_out_data_index++;
 	/* a negative lg_qc_counter will never do a quick check */
 	if (lg_qc_counter > 0)
 	  lg_qc_counter--;   /* decrement counter */
@@ -749,7 +743,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   // laservision product.
   lg_devp->poll_frequency = KETIMER_75U * 3000;
   hrtimer_init(&lg_devp->lg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-  lg_devp->lg_timer.function = lg2_evt_hdlr;
+  lg_devp->lg_timer.function = lg_evt_hdlr;
   hrtimer_start(&lg_devp->lg_timer, ktime_set(0, lg_devp->poll_frequency), HRTIMER_MODE_REL);
   do_gettimeofday(&lg_devp->last_ts);
   
@@ -757,7 +751,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   memset((char *)&xydata, 0, sizeof(struct lg_xydata));
   lg_write_io_to_dac(lg_devp, &xydata);
 
-  // Initialize save, delta, & all buffers to 0
+  // Initialize buffers to 0
   memset((char *)&lg_out_data, 0, sizeof(lg_out_data));
   memset((char *)&tgfind_word, 0, sizeof(tgfind_word));
 
