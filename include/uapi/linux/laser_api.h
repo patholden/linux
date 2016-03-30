@@ -100,7 +100,7 @@ typedef enum{
 }lg_cmd_enums;
 
 // CMD-WRITE DEFINES
-#define CMD_LAST CMDR_GETQCFLAG   // NOTE:  Change this if appending new commands
+#define CMD_LAST CMDW_DOLITEMOVE   // NOTE:  Change this if appending new commands
 #define   MAX_LG_BUFFER    0x80000  /* maximum size of lg_data[] */
 #define   MAX_TGFIND_BUFFER 0x10000  /* maximum number of target-find readings */
 #define   DO_TEST_DISPLAY  0x1      // USED BY DIAGS.  Will simulate DISPLAY mode

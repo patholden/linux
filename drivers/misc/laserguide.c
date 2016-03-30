@@ -231,7 +231,6 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	return(-EINVAL);
       memcpy((char *)&priv->lg_litemove.xy_curpt, (char *)&p_cmd_move->movedata.xy_curpt, sizeof(struct lg_move_data));
       priv->lg_litemove.cur_index = priv->lg_sensor.start_index;
-      printk(KERN_INFO "\nLITEMOVE starting, nPoints %d",priv->lg_litemove.nPoints);
       if (!priv->lg_litemove.poll_freq)
 	priv->lg_litemove.poll_freq = KETIMER_150U;
       // Write to current location in dark to fix up ghost beam
@@ -411,6 +410,7 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
   // Validate command type
   if (!pHdr->cmd || (pHdr->cmd > CMD_LAST))
     {
+      printk(KERN_ERR "\nAGS-LG: lg_write unknown command %d", pHdr->cmd);
       kfree(cmd_data);
       return(-EINVAL);
     }
@@ -419,7 +419,6 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
     {
       if ((pHdr->cmd == CMDW_DOSENSOR) || (pHdr->cmd == CMDW_DODARKMOVE) || (pHdr->cmd == CMDW_DOLITEMOVE))
 	{
-	  printk(KERN_INFO "\nAGS-LG: lg_write move command %d", pHdr->cmd);
 	  pMoveCmd = (struct cmd_rw_movedata *)cmd_data;
 	  rc = lg_proc_move_cmd(pMoveCmd, priv);
 	}
