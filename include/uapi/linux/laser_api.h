@@ -4,6 +4,7 @@
 // Kernel Event Timer values used
 #define KETIMER_10M   10000         // Sets timer to approx 10msec
 #define KETIMER_10U    10           // Sets timer to approx 10usec
+#define KETIMER_30U    30           // 30usec, SENSE mode default
 #define KETIMER_40U    40           // Sets timer to approx 40usec
 #define KETIMER_50U    50           // Sets timer to approx 50usec
 #define KETIMER_75U    75           // Sets timer to approx 75usec(default)
@@ -65,12 +66,11 @@ typedef enum{
   CMDW_BUFFER=1,
   CMDW_STOP,
   CMDW_DISPLAY,
-  CMDW_DODARKSENS,
+  CMDW_DODARKMOVE,
   CMDW_QUICKCHECK,
   CMDW_SETDELTA,
   CMDW_GOANGLE,
   CMDW_LOADWRTCNT,
-  CMDW_LOADRDCNT,
   CMDW_SETQCCOUNTER,
   CMDW_SETXOFFSET,
   CMDW_SETYOFFSET,
@@ -96,6 +96,7 @@ typedef enum{
   CMDR_GETQCCOUNTER,
   CMDR_GETANGLE,
   CMDR_GETQCFLAG,
+  CMDW_DOLITEMOVE,
 }lg_cmd_enums;
 
 // CMD-WRITE DEFINES
@@ -137,10 +138,22 @@ struct lg_val32 {
 struct lg_val64 {
   double     val64;
 };
-struct cmd_rw_base {
+struct lg_move_data
+{
+  struct lg_xydata   xy_curpt;
+  struct lg_xydelta  xy_delta;
+  uint32_t           poll_freq;
+  uint32_t           start_index;
+  uint32_t           cur_index;
+  uint32_t           nPoints;
+};
+struct cmd_hdr {
   uint16_t   cmd;
   uint16_t   test_mode;
   uint32_t   length;
+};
+struct cmd_rw_base {
+  struct cmd_hdr hdr;
   union {
     struct lg_val16 dat16;
     struct lg_val32 dat32;
@@ -148,6 +161,10 @@ struct cmd_rw_base {
     struct lg_xydata xydata;
     struct lg_xydelta xydelta;
   };
+};
+struct cmd_rw_movedata {
+  struct cmd_hdr hdr;
+  struct lg_move_data movedata;
 };
 #define   MAX_XYPOINTS    MAX_LG_BUFFER/sizeof(struct lg_xydata)
 struct cmd_rw {
