@@ -203,8 +203,12 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	return(-EINVAL);
       priv->lg_state    = LGSTATE_IDLE;
       priv->lg_sensor.cur_index = priv->lg_sensor.start_index;
+      // default sensor period is 30usec, but it takes a while to get data from
+      // sense buffer.  old code used to access buffer via serial port (115200 baud, ie 86.8 usec)
+      // Multiply by 2 if not defined by user for default cycle
       if (!priv->lg_sensor.poll_freq)
 	priv->lg_sensor.poll_freq = KETIMER_30U;
+      priv->lg_sensor.poll_freq *= 2;
       // Write to current location in dark to fix up ghost beam
       xy_data.xdata = priv->lg_sensor.xy_curpt.xdata;
       xy_data.ydata = priv->lg_sensor.xy_curpt.ydata;
@@ -661,7 +665,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	  }
 	priv->lg_state = LGSTATE_SENSEREAD;  // Need to let a full cycle go to get data
 	// Restart timer to continue working on data until user-app suspends work
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->lg_sensor.poll_freq));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq * 2)));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_DARKMOVE:
@@ -702,7 +706,6 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	break;
       case LGSTATE_SENSEREAD:
 	// Read in light-sensor info.
-	
 	tg_find_val1 = inb(TFPORTRL);
 	tg_find_val0 = inb(TFPORTRH) & 0x03;
 	// increment positions and index.  If at end of buffer,
