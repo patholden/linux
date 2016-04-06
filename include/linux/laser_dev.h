@@ -27,16 +27,20 @@
 #define LTC1597_BIPOLAR_MAX_INP_VAL1 0x7FFF
 #define LTC1597_BIPOLAR_MAX_INP_VAL2 0x8000
 #define SHORT_MAX_OVERFLOW           0x10000
+#define SENSE_FINE_UDELAY            3
+#define SENSE_MEDIUM_UDELAY          50
+#define SENSE_COARSE_UDELAY          100
+#define SENSE_WAIT_LOOP_COUNT        5
 
 // state machine defines
 enum lg_states {
     LGSTATE_IDLE=0,
     LGSTATE_DISPLAY,
     LGSTATE_SENSE,
-    LGSTATE_SENSEREAD,
     LGSTATE_SENSEREADY,
     LGSTATE_DARKMOVE,
     LGSTATE_LITEMOVE,
+    LGSTATE_GOPULSE,
 };
 
 struct lg_dev {
@@ -56,16 +60,15 @@ struct lg_dev {
   struct hrtimer          lg_timer;
   struct timeval          last_ts;
   struct event_times      last_events;     // Used to track timing of lg_evt_hdlr
+  struct lg_disp_data     lg_display;
   struct lg_move_data     lg_darkmove;
   struct lg_move_data     lg_litemove;
   struct lg_move_data     lg_sensor;
+  struct lg_pulse_data    lg_gopulse;
   struct lg_xydata        lg_lastxy;
   struct lg_xydata        lg_goangle;
   struct lg_xydelta       lg_delta;
   uint32_t                lg_state;
-  uint32_t                lg_display_end;
-  uint32_t                lg_display_index;
-  uint32_t                lg_dark_search;
   uint32_t                poll_frequency;    // Adjusted to nsec in CMDW_SETCLOCK
   uint8_t                 lg_ctrl2_store;    // Control byte 2 settings
   uint8_t                 pad[3];

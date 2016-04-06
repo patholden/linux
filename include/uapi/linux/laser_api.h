@@ -11,6 +11,10 @@
 #define KETIMER_100U  100           // Sets timer to approx 100usec
 #define KETIMER_150U  100           // Sets timer to approx 150usec
 
+// In sensor mode, use this as indicator that target may be nearby sensed
+// xy pair
+#define SENSE_MAX_THRESHOLD          0x3F0
+
 /*  IO addresses */
 //NOTE: 0x380 & 0x390 are reserved for X86 PIC
 #define   LG_BASE            0x378
@@ -97,10 +101,11 @@ typedef enum{
   CMDR_GETANGLE,
   CMDR_GETQCFLAG,
   CMDW_DOLITEMOVE,
+  CMDW_STOPCMD,
 }lg_cmd_enums;
 
 // CMD-WRITE DEFINES
-#define CMD_LAST CMDW_DOLITEMOVE   // NOTE:  Change this if appending new commands
+#define CMD_LAST CMDW_STOPCMD   // NOTE:  Change this if appending new commands
 #define   MAX_LG_BUFFER    0x80000  /* maximum size of lg_data[] */
 #define   MAX_TGFIND_BUFFER 0x10000  /* maximum number of target-find readings */
 #define   DO_TEST_DISPLAY  0x1      // USED BY DIAGS.  Will simulate DISPLAY mode
@@ -146,6 +151,23 @@ struct lg_move_data
   uint32_t           start_index;
   uint32_t           cur_index;
   uint32_t           nPoints;
+  uint32_t           do_coarse;   // used for sensor-mode only
+};
+struct lg_disp_data
+{
+  uint32_t           poll_freq;
+  uint32_t           start_index;
+  uint32_t           cur_index;
+  uint32_t           disp_end;
+  uint32_t           is_restart;
+};
+struct lg_pulse_data
+{
+  struct lg_xydata   xy_curpt;
+  uint32_t           poll_freq;
+  uint32_t           counter;
+  uint32_t           on_val;
+  uint32_t           off_val;
 };
 struct cmd_hdr {
   uint16_t   cmd;
@@ -165,13 +187,21 @@ struct cmd_rw_base {
 struct cmd_rw_movedata {
   struct cmd_hdr hdr;
   struct lg_move_data movedata;
-};
+} __attribute__ ((packed));
+struct cmd_rw_dispdata {
+  struct cmd_hdr hdr;
+  struct lg_disp_data dispdata;
+} __attribute__ ((packed));
+struct cmd_rw_pulsedata {
+  struct cmd_hdr hdr;
+  struct lg_pulse_data pulsedata;
+} __attribute__ ((packed));
+
 #define   MAX_XYPOINTS    MAX_LG_BUFFER/sizeof(struct lg_xydata)
 struct cmd_rw {
   struct cmd_rw_base base;
   struct lg_xydata  xydata[MAX_XYPOINTS];
-};
-
+} __attribute__ ((packed));
 
 /* the following are ioctl commands following the linux convention */
 #define LG_IOCNUM  0xE1
