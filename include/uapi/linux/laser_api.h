@@ -106,9 +106,11 @@ typedef enum{
 
 // CMD-WRITE DEFINES
 #define CMD_LAST CMDW_STOPCMD   // NOTE:  Change this if appending new commands
-#define   MAX_LG_BUFFER    0x80000  /* maximum size of lg_data[] */
-#define   MAX_TGFIND_BUFFER 0x10000  /* maximum number of target-find readings */
-#define   DO_TEST_DISPLAY  0x1      // USED BY DIAGS.  Will simulate DISPLAY mode
+#define MAX_TARGETS       24
+#define MAX_XYPOINTS    2048 * MAX_TARGETS * 2 
+#define MAX_LG_BUFFER   MAX_XYPOINTS * sizeof(struct lg_xydata)  /* maximum size of lg_data[] */
+#define   MAX_TGFIND_BUFFER 32768  // maximum number of target-find readings
+#define   DO_TEST_DISPLAY  0x1     // USED BY DIAGS.  Will simulate DISPLAY mode
 struct hobbs_ctrs {
   time_t    hobbs_time;
   time_t    xscanner_time;
@@ -158,7 +160,7 @@ struct lg_disp_data
   uint32_t           poll_freq;
   uint32_t           start_index;
   uint32_t           cur_index;
-  uint32_t           disp_end;
+  uint32_t           nPoints;
   uint32_t           is_restart;
 };
 struct lg_pulse_data
@@ -197,7 +199,6 @@ struct cmd_rw_pulsedata {
   struct lg_pulse_data pulsedata;
 } __attribute__ ((packed));
 
-#define   MAX_XYPOINTS    MAX_LG_BUFFER/sizeof(struct lg_xydata)
 struct cmd_rw {
   struct cmd_rw_base base;
   struct lg_xydata  xydata[MAX_XYPOINTS];

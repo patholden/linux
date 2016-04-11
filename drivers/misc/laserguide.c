@@ -148,12 +148,12 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
   // Don't allow faults
   if (dac_xval == 0)
     {
-      printk(KERN_CRIT "\nBAD INPUT DATA inpX=%x,adjX=%x,index=%d",pDevXYData->xdata,dac_xval, priv->lg_display.cur_index);
+      printk(KERN_CRIT "\nBAD INPUT DATA inpX=%x,adjX=%x",pDevXYData->xdata,dac_xval);
       dac_xval++;
     }
     if (dac_yval == 0)
       {
-	printk(KERN_CRIT "\nBAD INPUT DATA inpY=%x,adjY=%x,index=%d",pDevXYData->ydata,dac_yval, priv->lg_display.cur_index);
+	printk(KERN_CRIT "\nBAD INPUT DATA inpY=%x,adjY=%x",pDevXYData->ydata,dac_yval);
 	dac_yval++;
       return;
     }
@@ -189,7 +189,17 @@ static int lg_proc_pulse_cmd(struct cmd_rw_pulsedata *p_cmd_pulse, struct lg_dev
 	return(-EINVAL);
       priv->lg_state = LGSTATE_GOPULSE;
       priv->lg_ctrl2_store |= LASERENABLE;
-      memcpy((char *)&priv->lg_gopulse.xy_curpt, (char *)&p_cmd_pulse->pulsedata.xy_curpt, sizeof(struct lg_pulse_data));
+      outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+      priv->lg_gopulse.xy_curpt.xdata = p_cmd_pulse->pulsedata.xy_curpt.xdata;
+      priv->lg_gopulse.xy_curpt.ydata = p_cmd_pulse->pulsedata.xy_curpt.ydata;
+      priv->lg_gopulse.xy_curpt.ctrl_flags = BRIGHTBEAMISSET | BEAMONISSET | LASERENBISSET;
+      priv->lg_gopulse.counter = p_cmd_pulse->pulsedata.counter;
+      priv->lg_gopulse.on_val = p_cmd_pulse->pulsedata.on_val;
+      priv->lg_gopulse.off_val = p_cmd_pulse->pulsedata.off_val;
+      priv->lg_gopulse.poll_freq = p_cmd_pulse->pulsedata.poll_freq;
+      if (!priv->lg_gopulse.poll_freq)
+	priv->lg_gopulse.poll_freq = KETIMER_150U;
+      priv->lg_gopulse.poll_freq *= 1000;
       printk(KERN_INFO "\nAGS-LG LGSTATE_GOPULSE: x=%x,y=%x,freq=%d",priv->lg_gopulse.xy_curpt.xdata,
 	     priv->lg_gopulse.xy_curpt.ydata, priv->lg_gopulse.poll_freq);
       printk(KERN_INFO ", cntr=%d,onval=%d,offval=%d",priv->lg_gopulse.counter,
@@ -198,118 +208,128 @@ static int lg_proc_pulse_cmd(struct cmd_rw_pulsedata *p_cmd_pulse, struct lg_dev
 }
 static int lg_proc_disp_cmd(struct cmd_rw_dispdata *p_cmd_disp, struct lg_dev *priv)
 {
-      priv->lg_state    = LGSTATE_IDLE;
-      if (p_cmd_disp->hdr.length != sizeof(struct lg_disp_data))
-	return(-EINVAL);
-      lg_qc_flag = 0;   /* set quick check flag to "false" */
-      if (!p_cmd_disp->dispdata.is_restart)
-	{
-	  priv->lg_display.start_index = p_cmd_disp->dispdata.start_index;
-	  priv->lg_display.cur_index   = p_cmd_disp->dispdata.start_index;
-	  priv->lg_display.disp_end    = p_cmd_disp->dispdata.disp_end;
-	}
-      priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq * 3000;
-      priv->lg_state = LGSTATE_DISPLAY;
-      priv->lg_ctrl2_store |= LASERENABLE;
-      return(0);
+    struct lg_xydata   xydata;
+    
+    memset((char *)&xydata, 0, sizeof(struct lg_xydata));
+    priv->lg_state    = LGSTATE_IDLE;
+    if (p_cmd_disp->hdr.length != sizeof(struct lg_disp_data))
+      return(-EINVAL);
+    lg_qc_flag = 0;   /* set quick check flag to "false" */
+    if (!p_cmd_disp->dispdata.is_restart)
+      {
+	priv->lg_display.start_index = p_cmd_disp->dispdata.start_index;
+	priv->lg_display.cur_index = p_cmd_disp->dispdata.start_index;
+	priv->lg_display.nPoints = p_cmd_disp->dispdata.nPoints;
+	if (priv->lg_display.nPoints > MAX_XYPOINTS)
+	  return(-EINVAL);
+      }
+    priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq * 3000;
+    priv->lg_state = LGSTATE_DISPLAY;
+    priv->lg_ctrl2_store |= LASERENABLE;
+    outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+    return(0);
 }
 static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *priv)
 {
-  switch(p_cmd_move->hdr.cmd)
-    {
-    case CMDW_DOSENSOR:
-      priv->lg_state    = LGSTATE_IDLE;
-      if (p_cmd_move->hdr.length != sizeof(struct lg_move_data))
+    struct lg_xydata   xydata;
+    
+    memset((char *)&xydata, 0, sizeof(struct lg_xydata));
+    switch(p_cmd_move->hdr.cmd)
+      {
+      case CMDW_DOSENSOR:
+	priv->lg_state    = LGSTATE_IDLE;
+	if (p_cmd_move->hdr.length != sizeof(struct lg_move_data))
+	  return(-EINVAL);
+	memset((char *)&priv->lg_sensor, 0, sizeof(struct lg_move_data));
+	priv->lg_ctrl2_store |= LASERENABLE;
+	outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+	priv->lg_sensor.xy_curpt.xdata = p_cmd_move->movedata.xy_curpt.xdata;
+	priv->lg_sensor.xy_curpt.ydata = p_cmd_move->movedata.xy_curpt.ydata;
+	priv->lg_sensor.xy_curpt.ctrl_flags = BRIGHTBEAMISSET | BEAMONISSET | LASERENBISSET;
+	priv->lg_sensor.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
+	priv->lg_sensor.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
+	priv->lg_sensor.start_index = p_cmd_move->movedata.start_index;
+	priv->lg_sensor.cur_index = priv->lg_sensor.start_index;
+	priv->lg_sensor.nPoints = p_cmd_move->movedata.nPoints;
+	priv->lg_sensor.poll_freq = p_cmd_move->movedata.poll_freq;
+	priv->lg_sensor.do_coarse = p_cmd_move->movedata.do_coarse;
+	if (!priv->lg_sensor.nPoints || (priv->lg_sensor.nPoints > MAX_TGFIND_BUFFER))
+	  return(-EINVAL);
+	// default sensor period is 30usec, but it takes a while to get data from
+	// sense buffer.  old code used to access buffer via serial port (115200 baud, ie 86.8 usec)
+	// Multiply by 3 if not defined by user for default cycle
+	if (!priv->lg_sensor.poll_freq)
+	  priv->lg_sensor.poll_freq = KETIMER_30U;
+	else
+	  priv->lg_sensor.poll_freq = priv->lg_sensor.poll_freq * 2;
+	// Write to current location in dark to fix up ghost beam
+	priv->lg_state    = LGSTATE_SENSE;
+	break;
+      case CMDW_DODARKMOVE:
+	priv->lg_state    = LGSTATE_IDLE;
+	if (p_cmd_move->hdr.length != sizeof(struct lg_move_data))
+	  return(-EINVAL);
+	memset((char *)&priv->lg_darkmove, 0, sizeof(struct lg_move_data));
+	priv->lg_ctrl2_store &= LASERDISABLE;
+	outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+	priv->lg_darkmove.xy_curpt.xdata = p_cmd_move->movedata.xy_curpt.xdata;
+	priv->lg_darkmove.xy_curpt.ydata = p_cmd_move->movedata.xy_curpt.ydata;
+	priv->lg_darkmove.xy_curpt.ctrl_flags = 0;
+	priv->lg_darkmove.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
+	priv->lg_darkmove.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
+	priv->lg_darkmove.start_index = p_cmd_move->movedata.start_index;
+	priv->lg_darkmove.cur_index = priv->lg_darkmove.start_index;
+	priv->lg_darkmove.nPoints = p_cmd_move->movedata.nPoints;
+	priv->lg_darkmove.poll_freq = p_cmd_move->movedata.poll_freq;
+	if (!priv->lg_darkmove.poll_freq)
+	  priv->lg_darkmove.poll_freq = KETIMER_150U;
+	// Write first set of points now, let event handler do rest
+	priv->lg_darkmove.xy_curpt.ctrl_flags = 0;  // Force ctrl-flags to 0 for dark-move, just in case caller forgot to
+	lg_write_io_to_dac(priv, &priv->lg_darkmove.xy_curpt);
+	// Update last, prep for next set of points
+	priv->lg_lastxy.xdata = priv->lg_darkmove.xy_curpt.xdata;
+	priv->lg_lastxy.ydata = priv->lg_darkmove.xy_curpt.ydata;
+	priv->lg_lastxy.ctrl_flags = priv->lg_darkmove.xy_curpt.ctrl_flags;
+	lg_adjust_xypoints(&priv->lg_darkmove);
+	priv->lg_state    = LGSTATE_DARKMOVE;
+	break;
+      case CMDW_DOLITEMOVE:
+	priv->lg_state    = LGSTATE_IDLE;
+	if (p_cmd_move->hdr.length != sizeof(struct lg_move_data))
+	  return(-EINVAL);
+	memset((char *)&priv->lg_litemove, 0, sizeof(struct lg_move_data));
+	priv->lg_ctrl2_store |= LASERENABLE;
+	outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
+	priv->lg_litemove.xy_curpt.xdata = p_cmd_move->movedata.xy_curpt.xdata;
+	priv->lg_litemove.xy_curpt.ydata = p_cmd_move->movedata.xy_curpt.ydata;
+	priv->lg_litemove.xy_curpt.ctrl_flags = BRIGHTBEAMISSET | BEAMONISSET | LASERENBISSET;
+	priv->lg_litemove.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
+	priv->lg_litemove.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
+	priv->lg_litemove.start_index = p_cmd_move->movedata.start_index;
+	priv->lg_litemove.cur_index = priv->lg_litemove.start_index;
+	priv->lg_litemove.nPoints = p_cmd_move->movedata.nPoints;
+	priv->lg_litemove.poll_freq = p_cmd_move->movedata.poll_freq;
+	if (!priv->lg_litemove.poll_freq)
+	  priv->lg_litemove.poll_freq = KETIMER_150U;
+	priv->lg_litemove.poll_freq *= 1000;
+	// Write to first location get rid of trails
+	xydata.xdata = priv->lg_litemove.xy_curpt.xdata;
+	xydata.ydata = priv->lg_litemove.xy_curpt.ydata;
+	lg_write_io_to_dac(priv, &xydata);
+	udelay(2);
+	// Write to first location, let event handler do rest
+	lg_write_io_to_dac(priv, &priv->lg_litemove.xy_curpt);
+	// Update last, prep for next set of points
+	priv->lg_lastxy.xdata = priv->lg_litemove.xy_curpt.xdata;
+	priv->lg_lastxy.ydata = priv->lg_litemove.xy_curpt.ydata;
+	priv->lg_lastxy.ctrl_flags = priv->lg_litemove.xy_curpt.ctrl_flags;
+	lg_adjust_xypoints(&priv->lg_litemove);
+	priv->lg_state    = LGSTATE_LITEMOVE;
+	break;      
+      default:
 	return(-EINVAL);
-      memset((char *)&priv->lg_sensor, 0, sizeof(struct lg_move_data));
-      priv->lg_sensor.xy_curpt.xdata = p_cmd_move->movedata.xy_curpt.xdata;
-      priv->lg_sensor.xy_curpt.ydata = p_cmd_move->movedata.xy_curpt.ydata;
-      priv->lg_sensor.xy_curpt.ctrl_flags = 0;
-      priv->lg_sensor.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
-      priv->lg_sensor.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
-      priv->lg_sensor.start_index = p_cmd_move->movedata.start_index;
-      priv->lg_sensor.cur_index = priv->lg_sensor.start_index;
-      priv->lg_sensor.nPoints = p_cmd_move->movedata.nPoints;
-      priv->lg_sensor.poll_freq = p_cmd_move->movedata.poll_freq;
-      priv->lg_sensor.do_coarse = p_cmd_move->movedata.do_coarse;
-      if (!priv->lg_sensor.nPoints || ((priv->lg_sensor.nPoints * sizeof(int16_t)) > MAX_TGFIND_BUFFER))
-	return(-EINVAL);
-      priv->lg_sensor.cur_index = priv->lg_sensor.start_index;
-      // default sensor period is 30usec, but it takes a while to get data from
-      // sense buffer.  old code used to access buffer via serial port (115200 baud, ie 86.8 usec)
-      // Multiply by 3 if not defined by user for default cycle
-      if (!priv->lg_sensor.poll_freq)
-	priv->lg_sensor.poll_freq = KETIMER_30U;
-      else
-	priv->lg_sensor.poll_freq = priv->lg_sensor.poll_freq * 3;	
-      printk(KERN_INFO "\nAGS-LG: DOSENSE CMD x=%x,y=%x,delx=%x,dely=%x,freq=%d,nPoints=%d",priv->lg_sensor.xy_curpt.xdata,
-	     priv->lg_sensor.xy_curpt.ydata,priv->lg_sensor.xy_delta.xdata,priv->lg_sensor.xy_delta.ydata,
-	     priv->lg_sensor.poll_freq,priv->lg_sensor.nPoints);
-      // Write to current location in dark to fix up ghost beam
-      lg_write_io_to_dac(priv, &priv->lg_sensor.xy_curpt);
-      // Update last just in case user sends get-angle command
-      priv->lg_lastxy.xdata = priv->lg_sensor.xy_curpt.xdata;
-      priv->lg_lastxy.ydata = priv->lg_sensor.xy_curpt.ydata;
-      priv->lg_lastxy.ctrl_flags = priv->lg_sensor.xy_curpt.ctrl_flags;
-      // Calculate new data point for next round
-      lg_adjust_xypoints(&priv->lg_sensor);
-      priv->lg_state    = LGSTATE_SENSE;
-      break;
-    case CMDW_DODARKMOVE:
-      priv->lg_state    = LGSTATE_IDLE;
-      if (p_cmd_move->hdr.length != sizeof(struct lg_move_data))
-	return(-EINVAL);
-      memset((char *)&priv->lg_darkmove, 0, sizeof(struct lg_move_data));
-      priv->lg_darkmove.xy_curpt.xdata = p_cmd_move->movedata.xy_curpt.xdata;
-      priv->lg_darkmove.xy_curpt.ydata = p_cmd_move->movedata.xy_curpt.ydata;
-      priv->lg_darkmove.xy_curpt.ctrl_flags = 0;
-      priv->lg_darkmove.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
-      priv->lg_darkmove.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
-      priv->lg_darkmove.start_index = p_cmd_move->movedata.start_index;
-      priv->lg_darkmove.cur_index = priv->lg_darkmove.start_index;
-      priv->lg_darkmove.nPoints = p_cmd_move->movedata.nPoints;
-      priv->lg_darkmove.poll_freq = p_cmd_move->movedata.poll_freq;
-      if (!priv->lg_darkmove.poll_freq)
-	priv->lg_darkmove.poll_freq = KETIMER_150U;
-      // Write first set of points now, let event handler do rest
-      priv->lg_darkmove.xy_curpt.ctrl_flags = 0;  // Force ctrl-flags to 0 for dark-move, just in case caller forgot to
-      lg_write_io_to_dac(priv, &priv->lg_darkmove.xy_curpt);
-      // Update last, prep for next set of points
-      priv->lg_lastxy.xdata = priv->lg_darkmove.xy_curpt.xdata;
-      priv->lg_lastxy.ydata = priv->lg_darkmove.xy_curpt.ydata;
-      priv->lg_lastxy.ctrl_flags = priv->lg_darkmove.xy_curpt.ctrl_flags;
-      lg_adjust_xypoints(&priv->lg_darkmove);
-      priv->lg_state    = LGSTATE_DARKMOVE;
-      break;
-    case CMDW_DOLITEMOVE:
-      priv->lg_state    = LGSTATE_IDLE;
-      if (p_cmd_move->hdr.length != sizeof(struct lg_move_data))
-	return(-EINVAL);
-      memset((char *)&priv->lg_litemove, 0, sizeof(struct lg_move_data));
-      priv->lg_litemove.xy_curpt.xdata = p_cmd_move->movedata.xy_curpt.xdata;
-      priv->lg_litemove.xy_curpt.ydata = p_cmd_move->movedata.xy_curpt.ydata;
-      priv->lg_litemove.xy_curpt.ctrl_flags = 0;
-      priv->lg_litemove.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
-      priv->lg_litemove.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
-      priv->lg_litemove.start_index = p_cmd_move->movedata.start_index;
-      priv->lg_litemove.cur_index = priv->lg_litemove.start_index;
-      priv->lg_litemove.nPoints = p_cmd_move->movedata.nPoints;
-      priv->lg_litemove.poll_freq = p_cmd_move->movedata.poll_freq;
-      if (!priv->lg_litemove.poll_freq)
-	priv->lg_litemove.poll_freq = KETIMER_150U;
-      // Write to first location, let event handler do rest
-      lg_write_io_to_dac(priv, &priv->lg_litemove.xy_curpt);
-      // Update last, prep for next set of points
-      priv->lg_lastxy.xdata = priv->lg_litemove.xy_curpt.xdata;
-      priv->lg_lastxy.ydata = priv->lg_litemove.xy_curpt.ydata;
-      priv->lg_lastxy.ctrl_flags = priv->lg_litemove.xy_curpt.ctrl_flags;
-      lg_adjust_xypoints(&priv->lg_litemove);
-      priv->lg_state    = LGSTATE_LITEMOVE;
-      break;      
-    default:
-      return(-EINVAL);
-    }
-  return(0);
+      }
+    return(0);
 }
 static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
 {
@@ -336,6 +356,7 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     priv->lg_state    = LGSTATE_IDLE;
     priv->lg_display.start_index = 0;  /* reset from beginning */
     priv->lg_ctrl2_store |= LASERENABLE;
+    outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
     memset((char *)&priv->lg_delta, 0, sizeof(struct lg_xydelta));
     priv->lg_state    = LGSTATE_DISPLAY;
     break;
@@ -490,13 +511,6 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
       return(-EINVAL);
     }
 
-  // Copy data from cmd buffer to local static buff
-  if (cmd_data->base.hdr.length > MAX_LG_BUFFER)
-    {
-      printk(KERN_ERR "\nAGS-LG: LG_WRITE Buffer too big %d",cmd_data->base.hdr.length);
-      kfree(cmd_data);
-      return(-EINVAL);
-    }
   // First lock driver so no more writes can occur and event handler will not
   // hiccup.
   // Set state to IDLE mode so timer event will stop display
@@ -504,9 +518,16 @@ ssize_t lg_write(struct file *file, const char __user *buffer, size_t count, lof
   // when reloading it!
   spin_lock(&priv->lock);
   // Clear out old display data
-  memset((char *)&lg_display_data, 0, sizeof(lg_display_data));
+  memset((char *)&lg_display_data, 0, MAX_LG_BUFFER);
+  if (cmd_data->base.hdr.length > MAX_LG_BUFFER)
+    {
+      printk(KERN_ERR "\nAGS-LG: LG_WRITE Buffer too big %d, must be less than %d",
+	     cmd_data->base.hdr.length, priv->lg_disp_count);
+      kfree(cmd_data);
+      return(-EINVAL);
+    }  
   // Write new display data
-  memcpy((char *)&lg_display_data[0], (char *)&cmd_data->xydata[0], cmd_data->base.hdr.length);
+  memcpy((char *)&lg_display_data, (char *)&cmd_data->xydata[0], cmd_data->base.hdr.length);
   // Release device for incoming commands and read/write operations.
   spin_unlock(&priv->lock);
   if (cmd_data->base.hdr.test_mode == DO_TEST_DISPLAY)
@@ -556,6 +577,7 @@ ssize_t lg_read(struct file *file, char __user *buffer, size_t count, loff_t *f_
     /* sensor scan has been done */
     if (copy_to_user(buffer, &tgfind_word[0], count))
       return(-EFAULT);
+    priv->lg_state = LGSTATE_IDLE;
     return(count);
 }
 
@@ -595,7 +617,7 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
       }
     break;
   case LGGETCTL2STAT:
-    ctl2_val = (uint32_t)(inb(LG_IO_CNTRL2) & 0xFF);
+    ctl2_val = inb(LG_IO_CNTRL2);
     if (copy_to_user(argp, &ctl2_val, sizeof(uint32_t)))
       {
 	printk(KERN_ERR "\nAGS-LG:Error occurred for message %x from user",cmd);
@@ -629,10 +651,10 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
     struct lg_xydata *xydata;
     struct lg_dev    *priv;
     uint16_t         tfword;
-    uint8_t          cur_flags;
     uint8_t          tg_find_val0;
     uint8_t          tg_find_val1;
     uint8_t          b_optic;
+    uint8_t          cur_flags;
 
     priv = container_of(timer, struct lg_dev, lg_timer);
     if (!priv)
@@ -678,7 +700,10 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	priv->lg_lastxy.xdata = priv->lg_sensor.xy_curpt.xdata;
 	priv->lg_lastxy.ydata = priv->lg_sensor.xy_curpt.ydata;
 	priv->lg_lastxy.ctrl_flags = priv->lg_sensor.xy_curpt.ctrl_flags;
-	if ((priv->lg_sensor.cur_index - priv->lg_sensor.start_index) < priv->lg_sensor.nPoints)
+	if ((priv->lg_sensor.cur_index >= MAX_TGFIND_BUFFER) ||
+	    ((priv->lg_sensor.cur_index - priv->lg_sensor.start_index) >= priv->lg_sensor.nPoints))
+	  priv->lg_state = LGSTATE_SENSEREADY;
+	else
 	  {
 	    // Calculate new data point for next round
 	    lg_adjust_xypoints(&priv->lg_sensor);
@@ -688,25 +713,31 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    // to see a change in sensor data.  When on target it only takes
 	    // 3-4 usec to see a change in sensor data.
 	    if (priv->lg_sensor.do_coarse)
-	      udelay(SENSE_COARSE_UDELAY);
+	      priv->lg_sensor.poll_freq = SENSOR_COARSE_READ_FREQ;
 	    else
-	      udelay(SENSE_FINE_UDELAY);
+	      priv->lg_sensor.poll_freq = SENSOR_FINE_READ_FREQ;
+	    priv->lg_state = LGSTATE_SENSEREAD;
+	  }
+	// Restart timer to continue working on data until end of sensor pairs
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
+	return(HRTIMER_RESTART);
+	break;
+      case LGSTATE_SENSEREAD:
+	if ((priv->lg_sensor.cur_index < MAX_TGFIND_BUFFER) &&
+	    ((priv->lg_sensor.cur_index - priv->lg_sensor.start_index) <= priv->lg_sensor.nPoints))
+	  {
 	    // Read in light-sensor info.
 	    tg_find_val1 = inb(TFPORTRL);
 	    tg_find_val0 = inb(TFPORTRH) & 0x03;
 	    tfword =  (tg_find_val0 << 8) | tg_find_val1;
 	    tgfind_word[priv->lg_sensor.cur_index++] = tfword;
+	    priv->lg_sensor.poll_freq = SENSOR_DEF_FREQ;
+	    priv->lg_state = LGSTATE_SENSE;
 	  }
-	else
-	  priv->lg_state = LGSTATE_SENSEREADY;
 	// Restart timer to continue working on data until end of sensor pairs
 	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
 	return(HRTIMER_RESTART);
 	break;
-      case LGSTATE_SENSEREADY:
-	// Restart timer to continue working on data until end of sensor pairs
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
-	return(HRTIMER_RESTART);
       case LGSTATE_DARKMOVE:
 	// Write current point to DAC.
 	lg_write_io_to_dac(priv, &priv->lg_darkmove.xy_curpt);
@@ -750,18 +781,20 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
       case LGSTATE_DISPLAY:
 	// Writes xy-pair to DAC
 	// Check for end of buffer, start over when end is reached
-	if ((priv->lg_display.cur_index * sizeof(struct lg_xydata)) >= priv->lg_display.disp_end)
+	if ((priv->lg_display.cur_index >= priv->lg_display.nPoints) ||
+	    (priv->lg_display.cur_index >= MAX_XYPOINTS))
 	  priv->lg_display.cur_index = 0;
 	xydata = (struct lg_xydata *)&lg_display_data[priv->lg_display.cur_index];
+	// Write XY pair to DAC
 	if (priv->lg_display.cur_index == 0)
 	  {
+	    // Starting over, move XY to new location in dark
 	    cur_flags = xydata->ctrl_flags;
 	    xydata->ctrl_flags = 0;
-	    lg_write_io_to_dac(priv, xydata);  // Force write XY pair to DAC in the dark
-	    xydata->ctrl_flags = cur_flags;    // Let mirrors settle
-	    udelay(100);
+	    lg_write_io_to_dac(priv, xydata);
+	    xydata->ctrl_flags = cur_flags;
+	    udelay(2);
 	  }
-	// Write XY pair to DAC
 	lg_write_io_to_dac(priv, xydata);
 	// Save current XY point
 	priv->lg_lastxy.xdata = xydata->xdata;
@@ -813,6 +846,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_IDLE:
+      case LGSTATE_SENSEREADY:
       default:
 	// Restart timer to continue working on data until user-app suspends work
 	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->poll_frequency));
@@ -856,11 +890,12 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   lg_devp = kzalloc(sizeof(struct lg_dev), GFP_KERNEL);
   if (!lg_devp)
     {
-      pr_err("kzalloc() failed for laser\n");
+      pr_err("kzalloc() failed for laser device struct\n");
       return(-ENOMEM);
     }
 
   memset((char *)lg_devp,0,sizeof(struct lg_dev));
+  memset((char *)&lg_display_data,0, lg_devp->lg_disp_count);
   platform_set_drvdata(plat_dev, lg_devp);
   lg_devp->dev = &plat_dev->dev;
 
@@ -915,11 +950,11 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   lg_write_io_to_dac(lg_devp, &xydata);
 
   // Initialize buffers to 0
-  memset((char *)&lg_display_data, 0, sizeof(lg_display_data));
   memset((char *)&tgfind_word, 0, sizeof(tgfind_word));
 
   // Start in idle state so timer handler does nothing
   lg_devp->lg_state = LGSTATE_IDLE;
+  lg_devp->lg_disp_count = MAX_XYPOINTS * sizeof(struct lg_xydata);
   
   // Start with READY-LED ON TO INDICATE NOT READY TO RUN.
   lg_devp->lg_ctrl2_store = RDYLEDON;
