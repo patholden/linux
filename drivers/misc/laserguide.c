@@ -29,9 +29,18 @@
 #include <linux/slab.h>
 #include <linux/laser_api.h>
 #include <linux/laser_dev.h>
+//#include <linux/init.h>
+#include <linux/serial_reg.h>
+//#include <linux/serial.h>
+//#include <linux/serial_8250.h>
+//#include <asm/io.h>
+//#include <asm/serial.h>
 
-#define LG_VERSION "0.2"
-#define DEV_NAME   "laser"
+
+#define LG_VERSION 	 "0.3"
+#define DEV_NAME   	 "laser"
+#define DEV_NAME_LGTTYS1 "lgttyS1"
+#define DEV_NAME_LGTTYS2 "lgttyS2"
 
 static struct lg_xydata lg_display_data[MAX_XYPOINTS];
 static uint16_t tgfind_word[MAX_TGFIND_BUFFER];
@@ -46,14 +55,37 @@ static int lg_shutter_open;
 uint8_t lg_threshold = 0;
 
 // DEFINES used by event timer
-#define UARTPORT 0x3F8
+#define UARTPORT LG_TTYS1_BASE //0x3F8 
 #define UCOUNT   500
+
+//DEFINES used by LG serial port functions 
+#define BOTH_EMPTY (UART_LSR_TEMT | UART_LSR_THRE)
 
 // STATIC FUNCTION PROTOTYPES
 static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer);
 static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDevXYData);
 static int lg_pdev_remove(struct platform_device *pdev);
 static int lg_dev_probe(struct platform_device *dev);
+
+//Simple Serial IO functions
+unsigned int LG_SerialRead(int port, int offset)
+{
+        return inb(port + offset);
+}
+
+void  LG_SerialWrite(int port, int offset, int value)
+{
+unsigned int status;
+
+	for (;;)
+	{
+        	status = LG_SerialRead(port, UART_LSR);
+        	if ((status & BOTH_EMPTY) == BOTH_EMPTY)
+           		return;
+        	cpu_relax();
+	}	
+        outb(value, port + offset);
+}
 
 // START OF LOCAL FUNCTIONS
 static void lg_get_xydata_ltcval(int16_t *output_val, int16_t input_val)
@@ -831,7 +863,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 static const struct file_operations lg_fops = {
   .owner	    = THIS_MODULE,
   .llseek           = no_llseek,
-  .read             =  lg_read,        /* lg_read */
+  .read             = lg_read,        /* lg_read */
   .write            = lg_write,       /* lg_write */
   .unlocked_ioctl   = lg_ioctl,       /* lg_ioctl */
 #ifdef CONFIG_COMPAT
@@ -840,17 +872,41 @@ static const struct file_operations lg_fops = {
   .open             = lg_open,        /* lg_open */
   .release          = lg_release,     /* lg_release */
 };
+
+static const struct file_operations lg_ttySfops = {
+  .owner            = THIS_MODULE,
+  .read             = LG_SerialRead,  /* read */
+  .write            = LG_SerialWrite, /* write */
+  .open             = lg_open,        /* open */
+  .release          = lg_release,     /* release */
+};
+
 struct miscdevice lg_device = {
   .minor = MISC_DYNAMIC_MINOR,
   .name = DEV_NAME,
   .fops = &lg_fops,
 };
+
+struct miscdevice lg_ttyS1device = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DEV_NAME_LGTTYS1,
+  .fops = &lg_ttySfops,
+};
+
+struct miscdevice lg_ttyS2device = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DEV_NAME_LGTTYS2,
+  .fops = &lg_ttySfops,
+};
+
 static int lg_dev_probe(struct platform_device *plat_dev)
 {
   struct lg_xydata xydata;
   struct lg_dev *lg_devp;
   struct device *this_device;
   int           rc;
+  unsigned char c;
+  unsigned int ier;
 
   // allocate mem for struct device will work with
   lg_devp = kzalloc(sizeof(struct lg_dev), GFP_KERNEL);
@@ -900,6 +956,87 @@ static int lg_dev_probe(struct platform_device *plat_dev)
       printk(KERN_CRIT "\nUnable to get IO regs");
       return(-EBUSY);
     }
+
+  // Setup lgttyS1 device
+  lg_devp->lgttyS1.minor = lg_ttyS1device.minor;
+  lg_devp->lgttyS1.name = DEV_NAME_LGTTYS1;
+  lg_devp->lgttyS1.fops = lg_ttyS1device.fops;
+  rc = misc_register(&lg_devp->lgttyS1);
+  if (rc)
+    {
+      printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS1 device, err %d \n", rc);
+      kfree(lg_devp);
+      return(rc);
+    }
+
+  this_device = lg_devp->lgttyS1.this_device;
+  lg_devp->lgttyS1.parent = lg_devp->dev;
+  dev_set_drvdata(this_device, lg_devp);
+  platform_set_drvdata(plat_dev, lg_devp);
+  printk(KERN_INFO "\nAGS-LG: Device lgttyS1 created\n");
+
+  // Obtain IO space for lgttyS1 device
+  if (!request_region(LG_TTYS1_BASE, LG_TTYS1_REGION, DEV_NAME_LGTTYS1))
+    {
+      kfree(lg_devp);
+      misc_deregister(&lg_devp->lgttyS1);
+      printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS1");
+      return(-EBUSY);
+    }
+
+  // Setup lgttyS2 device
+  lg_devp->lgttyS2.minor = lg_ttyS2device.minor;
+  lg_devp->lgttyS2.name = DEV_NAME_LGTTYS2;
+  lg_devp->lgttyS2.fops = lg_ttyS2device.fops;
+  rc = misc_register(&lg_devp->lgttyS2);
+  if (rc)
+    {
+      printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS2 device, err %d \n", rc);
+      kfree(lg_devp);
+      return(rc);
+    }
+
+  this_device = lg_devp->lgttyS2.this_device;
+  lg_devp->miscdev.parent = lg_devp->dev;
+  dev_set_drvdata(this_device, lg_devp);
+  platform_set_drvdata(plat_dev, lg_devp);
+  printk(KERN_INFO "\nAGS-LG: Device lgttyS2 created\n");
+
+  // Obtain IO space for lgttyS2 device
+  if (!request_region(LG_TTYS2_BASE, LG_TTYS2_REGION, DEV_NAME_LGTTYS2))
+    {
+      kfree(lg_devp);
+      misc_deregister(&lg_devp->lgttyS2);
+      printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS2");
+      return(-EBUSY);
+    }
+
+  //Initialize serial ports
+  //Front end serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, 0x3);   /* 8n1 */
+  ier = LG_SerialRead(LG_TTYS1_BASE, UART_IER);
+  LG_SerialWrite(LG_TTYS1_BASE, UART_IER, ier & UART_IER_UUE); /* no interrupt */
+  LG_SerialWrite(LG_TTYS1_BASE, UART_FCR, 0);     /* no fifo */
+  LG_SerialWrite(LG_TTYS1_BASE, UART_MCR, 0x3);   /* DTR + RTS */
+
+  c = LG_SerialRead(LG_TTYS1_BASE, UART_LCR);
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, c | UART_LCR_DLAB);
+  LG_SerialWrite(LG_TTYS1_BASE, UART_DLL, 1);
+  LG_SerialWrite(LG_TTYS1_BASE, UART_DLM, 0);
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, c & ~UART_LCR_DLAB);
+
+  //LCB serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, 0x3);   /* 8n1 */
+  ier = LG_SerialRead(LG_TTYS2_BASE, UART_IER);
+  LG_SerialWrite(LG_TTYS2_BASE, UART_IER, ier & UART_IER_UUE); /* no interrupt */
+  LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0);     /* no fifo */
+  LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x3);   /* DTR + RTS */
+
+  c = LG_SerialRead(LG_TTYS2_BASE, UART_LCR);
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, c | UART_LCR_DLAB);
+  LG_SerialWrite(LG_TTYS2_BASE, UART_DLL, 1);
+  LG_SerialWrite(LG_TTYS2_BASE, UART_DLM, 0);
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, c & ~UART_LCR_DLAB);
   
   // DEFAULT event timer poll frequency is 75 usec, but need to
   // increase by 3000 instead of 1000 to get timing right for new
@@ -926,7 +1063,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   outb(lg_devp->lg_ctrl2_store, LG_IO_CNTRL2);
 
   // All initialization done, so enable timer
-  printk(KERN_INFO "\nAGS-LG:Laser Guide miscdevice installed, timer created.\n");
+  printk(KERN_INFO "\nAGS-LG: Laser boardcomm Devices installed, initialized and timer created.\n");
   return(0);
 }
 static struct platform_device lg_dev = {
@@ -956,7 +1093,11 @@ static int lg_pdev_remove(struct platform_device *pdev)
   this_device = lg_devp->miscdev.this_device;
   hrtimer_cancel(&lg_devp->lg_timer);
   release_region(LG_BASE, LASER_REGION);
+  release_region(LG_TTYS1_BASE, LG_TTYS1_REGION);
+  release_region(LG_TTYS2_BASE, LG_TTYS2_REGION);
   misc_deregister(&lg_devp->miscdev);
+  misc_deregister(&lg_devp->lgttyS1);
+  misc_deregister(&lg_devp->lgttyS2);
   kfree(lg_devp);
   return(0);
 }
@@ -987,10 +1128,10 @@ static void __exit laser_exit(void)
   platform_driver_unregister(&lg_platform_driver);
   return;
 }
+
 module_init(laser_init);
 module_exit(laser_exit);
 
 MODULE_AUTHOR("Patricia A. Holden for Assembly Guidance Systems");
 MODULE_DESCRIPTION("Driver for AGS Laser Guidance System 2");
 MODULE_LICENSE("GPL");
-

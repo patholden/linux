@@ -46,6 +46,8 @@ enum lg_states {
 struct lg_dev {
   // dev stuff first
   struct miscdevice       miscdev;
+  struct miscdevice 	  lgttyS1;
+  struct miscdevice       lgttyS2;
   struct mutex            lg_mutex;
   spinlock_t              lock;
   struct kref             ref;

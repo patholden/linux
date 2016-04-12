@@ -17,7 +17,7 @@
 
 /*  IO addresses */
 //NOTE: 0x380 & 0x390 are reserved for X86 PIC
-#define   LG_BASE            0x378
+#define   LG_BASE	     0x378
 #define   LG_IO_CNTRL1       0x378
 #define   LG_IO_CNTRL2       0x379          //
 #define   LG_IO_XL           0x37A          // X low byte (writes to DAC input)
@@ -26,8 +26,19 @@
 #define   LG_IO_YH           0x37D          // Y high byte
 #define   TFPORTRL           0x37E          // Read lower byte of TF IO
 #define   TFPORTRH           0x37F          // Read upper byte of TF IO
-#define   LASEREND           0x380          // RESERVED BY X86 FOR APIC
+#define   LASEREND	     0x380
 #define   LASER_REGION (LASEREND-LG_BASE)
+
+//This area is the same as the ISA serial port region for the 1st 2 serial ports
+//Depends on the 8250 device support being turned off in the kernel
+#define   LG_TTYS2_BASE      0x2F8
+#define   LG_TTYS2_END       0x300
+#define   LG_TTYS2_REGION (LG_TTYS2_END-LG_TTYS2_BASE)
+
+#define   LG_TTYS1_BASE	     0x3F8
+#define   LG_TTYS1_END	     0x400
+#define   LG_TTYS1_REGION (LG_TTYS1_END-LG_TTYS1_BASE)    
+
 
 // Control flags for IO-writes
 #define  BEAMONISSET    0x1
@@ -211,6 +222,10 @@ struct cmd_rw {
 #define   LGGETCTL2STAT   _IOR(LG_IOCNUM, 0xB8, unsigned int)
 #define   LGGETEVENTTIMES _IOR(LG_IOCNUM, 0xB9, struct event_times)
 #define   LGGETHOBBSTIMES _IOR(LG_IOCNUM, 0xB9, struct hobbs_ctrs)
+
+//Serial Port function prototypes
+unsigned int LG_SerialRead(int port, int offset);
+void LG_SerialWrite(int port, int offset, int value);
 
 
 #endif  /*  _LASERIOCTL_H  */
