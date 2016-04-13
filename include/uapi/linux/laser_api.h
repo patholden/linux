@@ -31,12 +31,12 @@
 
 //This area is the same as the ISA serial port region for the 1st 2 serial ports
 //Depends on the 8250 device support being turned off in the kernel
-#define   LG_TTYS2_BASE      0x2F8
-#define   LG_TTYS2_END       0x300
+#define   LG_TTYS2_BASE      0x3E8
+#define   LG_TTYS2_END       0x3F0
 #define   LG_TTYS2_REGION (LG_TTYS2_END-LG_TTYS2_BASE)
 
-#define   LG_TTYS1_BASE	     0x3F8
-#define   LG_TTYS1_END	     0x400
+#define   LG_TTYS1_BASE	     0x2F8
+#define   LG_TTYS1_END	     0x300
 #define   LG_TTYS1_REGION (LG_TTYS1_END-LG_TTYS1_BASE)    
 
 
@@ -223,10 +223,5 @@ struct cmd_rw {
 #define   LGGETCTL2STAT   _IOR(LG_IOCNUM, 0xB8, unsigned int)
 #define   LGGETEVENTTIMES _IOR(LG_IOCNUM, 0xB9, struct event_times)
 #define   LGGETHOBBSTIMES _IOR(LG_IOCNUM, 0xB9, struct hobbs_ctrs)
-
-//Serial Port function prototypes
-unsigned int LG_SerialRead(int port, int offset);
-void LG_SerialWrite(int port, int offset, int value);
-
 
 #endif  /*  _LASERIOCTL_H  */

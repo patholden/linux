@@ -29,13 +29,7 @@
 #include <linux/slab.h>
 #include <linux/laser_api.h>
 #include <linux/laser_dev.h>
-//#include <linux/init.h>
 #include <linux/serial_reg.h>
-//#include <linux/serial.h>
-//#include <linux/serial_8250.h>
-//#include <asm/io.h>
-//#include <asm/serial.h>
-
 
 #define LG_VERSION 	 "0.3"
 #define DEV_NAME   	 "laser"
@@ -53,9 +47,10 @@ int32_t  lg_roi_on     = 0;
 int32_t  lg_roi_del    = 0;
 static int lg_shutter_open;
 uint8_t lg_threshold = 0;
+uint32_t status = 0;
 
 // DEFINES used by event timer
-#define UARTPORT LG_TTYS1_BASE //0x3F8 
+#define UARTPORT LG_TTYS1_BASE //0x2F8 
 #define UCOUNT   500
 
 //DEFINES used by LG serial port functions 
@@ -68,26 +63,137 @@ static int lg_pdev_remove(struct platform_device *pdev);
 static int lg_dev_probe(struct platform_device *dev);
 
 //Simple Serial IO functions
-unsigned int LG_SerialRead(int port, int offset)
+ssize_t LG_SerialRead1(struct file *file, char __user *buffer, size_t count, loff_t *f_pos)
 {
-        return inb(port + offset);
+    int  value;
+    struct lg_dev *priv = file->private_data;
+
+    if (!priv)
+      return(-EBADF);
+
+    if (count != 1)
+      return(-EINVAL);
+
+    for (;;)
+    {
+     status = inb(LG_TTYS1_BASE + UART_LSR);
+     if ((status & UART_LSR_DR) == UART_LSR_DR) //Rx Ready??
+        break;
+     cpu_relax();
+    }
+
+    value = inb(LG_TTYS1_BASE);
+//    printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
+    if (copy_to_user(buffer, (char *)&value, count))
+      return(-EFAULT);
+    return(count);
 }
 
-void  LG_SerialWrite(int port, int offset, int value)
-{
-unsigned int status;
 
-	for (;;)
-	{
-        	status = LG_SerialRead(port, UART_LSR);
-        	if ((status & BOTH_EMPTY) == BOTH_EMPTY)
-           		return;
-        	cpu_relax();
-	}	
+ssize_t LG_SerialWrite1(struct file *file, const char __user *buffer, size_t count, loff_t *f_pos)
+{
+  int value;
+
+  struct lg_dev *priv = file->private_data;
+
+  if (!priv)
+    return(-EBADF);
+
+  if (count != 1)
+    return -EINVAL;
+
+  for (;;)
+   {
+     status = inb(LG_TTYS1_BASE + UART_LSR);
+     if ((status & BOTH_EMPTY) == BOTH_EMPTY) //Tx Empty??
+     	break;
+     cpu_relax();
+   } 
+
+  if(copy_from_user((char *)&value, buffer, count))
+    {
+      return -EFAULT;
+    }
+
+  outb(value, LG_TTYS1_BASE);
+ // printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
+  return(count);
+}
+
+ssize_t LG_SerialRead2(struct file *file, char __user *buffer, size_t count, loff_t *f_pos)
+{
+    int value;
+    struct lg_dev *priv = file->private_data;
+
+    if (!priv)
+      return(-EBADF);
+
+    if (count != 1)
+      return(-EINVAL);
+
+    for (;;)
+    { 
+     status = inb(LG_TTYS2_BASE + UART_LSR);
+     if ((status & UART_LSR_DR) == UART_LSR_DR) //Rx Ready??
+        break;
+     cpu_relax();
+    }
+
+    value = inb(LG_TTYS2_BASE);
+//    printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
+    if (copy_to_user(buffer, (char *)&value, count))
+      return(-EFAULT);
+    return(count);
+}
+
+
+ssize_t LG_SerialWrite2(struct file *file, const char __user *buffer, size_t count, loff_t *f_pos)
+{
+  int value;
+  struct lg_dev *priv = file->private_data;
+
+  if (!priv)
+    return(-EBADF);
+
+  if (count != 1)
+    return -EINVAL;
+
+  for (;;)
+   {
+     status = inb(LG_TTYS2_BASE + UART_LSR);
+     if ((status & BOTH_EMPTY) == BOTH_EMPTY) //Tx Empty??
+        break;
+     cpu_relax();
+   }
+
+  if(copy_from_user((char *)&value, buffer, count))
+    {
+      return -EFAULT;
+    }
+
+  outb(value, LG_TTYS2_BASE);
+ // printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
+  return(count);
+}
+
+
+//Start of Local Functions
+//The following 2 are used to init the serial port registers in the FPGA
+static uint8_t LG_SerialRead(int port, int offset)
+{
+	uint8_t value;
+	value = inb(port + offset);
+//	printk(KERN_CRIT "\nLG_SerialRead -- ADDR: %x DATA: %x", port + offset, value);
+        return(value);
+}
+
+
+static void LG_SerialWrite(int port, int offset, int value)
+{
         outb(value, port + offset);
+//	printk(KERN_CRIT "\nLG_SerialWrite -- ADDR: %x DATA: %x", port + offset, value);
 }
 
-// START OF LOCAL FUNCTIONS
 static void lg_get_xydata_ltcval(int16_t *output_val, int16_t input_val)
 {
   if (!input_val)
@@ -897,7 +1003,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 static const struct file_operations lg_fops = {
   .owner	    = THIS_MODULE,
   .llseek           = no_llseek,
-  .read             = lg_read,        /* lg_read */
+  .read             =  lg_read,        /* lg_read */
   .write            = lg_write,       /* lg_write */
   .unlocked_ioctl   = lg_ioctl,       /* lg_ioctl */
 #ifdef CONFIG_COMPAT
@@ -907,10 +1013,18 @@ static const struct file_operations lg_fops = {
   .release          = lg_release,     /* lg_release */
 };
 
-static const struct file_operations lg_ttySfops = {
+static const struct file_operations lg_ttyS1fops = {
   .owner            = THIS_MODULE,
-  .read             = LG_SerialRead,  /* read */
-  .write            = LG_SerialWrite, /* write */
+  .read             = LG_SerialRead1,  /* read */
+  .write            = LG_SerialWrite1, /* write */
+  .open             = lg_open,        /* open */
+  .release          = lg_release,     /* release */
+};
+
+static const struct file_operations lg_ttyS2fops = {
+  .owner            = THIS_MODULE,
+  .read             = LG_SerialRead2,  /* read */
+  .write            = LG_SerialWrite2, /* write */
   .open             = lg_open,        /* open */
   .release          = lg_release,     /* release */
 };
@@ -924,13 +1038,13 @@ struct miscdevice lg_device = {
 struct miscdevice lg_ttyS1device = {
   .minor = MISC_DYNAMIC_MINOR,
   .name = DEV_NAME_LGTTYS1,
-  .fops = &lg_ttySfops,
+  .fops = &lg_ttyS1fops,
 };
 
 struct miscdevice lg_ttyS2device = {
   .minor = MISC_DYNAMIC_MINOR,
   .name = DEV_NAME_LGTTYS2,
-  .fops = &lg_ttySfops,
+  .fops = &lg_ttyS2fops,
 };
 
 static int lg_dev_probe(struct platform_device *plat_dev)
@@ -1047,31 +1161,23 @@ static int lg_dev_probe(struct platform_device *plat_dev)
     }
 
   //Initialize serial ports
-  //Front end serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
-  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, 0x3);   /* 8n1 */
-  ier = LG_SerialRead(LG_TTYS1_BASE, UART_IER);
-  LG_SerialWrite(LG_TTYS1_BASE, UART_IER, ier & UART_IER_UUE); /* no interrupt */
-  LG_SerialWrite(LG_TTYS1_BASE, UART_FCR, 0);     /* no fifo */
-  LG_SerialWrite(LG_TTYS1_BASE, UART_MCR, 0x3);   /* DTR + RTS */
+  //LGTTYS1 Front end serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+  LG_SerialWrite(LG_TTYS1_BASE, UART_IER, 0);    // 'rupts off
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, UART_LCR_DLAB); //DLAB = 1
+  LG_SerialWrite(LG_TTYS1_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
+  LG_SerialWrite(LG_TTYS1_BASE, UART_DLM, 0x0);  // DLM = 0x0
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
+  LG_SerialWrite(LG_TTYS1_BASE, UART_FCR, 0x0); // FCR = No FIFO 
+  LG_SerialWrite(LG_TTYS1_BASE, UART_MCR, 0x0); // MCR = 
 
-  c = LG_SerialRead(LG_TTYS1_BASE, UART_LCR);
-  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, c | UART_LCR_DLAB);
-  LG_SerialWrite(LG_TTYS1_BASE, UART_DLL, 1);
-  LG_SerialWrite(LG_TTYS1_BASE, UART_DLM, 0);
-  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, c & ~UART_LCR_DLAB);
-
-  //LCB serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
-  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, 0x3);   /* 8n1 */
-  ier = LG_SerialRead(LG_TTYS2_BASE, UART_IER);
-  LG_SerialWrite(LG_TTYS2_BASE, UART_IER, ier & UART_IER_UUE); /* no interrupt */
-  LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0);     /* no fifo */
-  LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x3);   /* DTR + RTS */
-
-  c = LG_SerialRead(LG_TTYS2_BASE, UART_LCR);
-  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, c | UART_LCR_DLAB);
-  LG_SerialWrite(LG_TTYS2_BASE, UART_DLL, 1);
-  LG_SerialWrite(LG_TTYS2_BASE, UART_DLM, 0);
-  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, c & ~UART_LCR_DLAB);
+  //LGTTYS2 Laser Control Board serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+  LG_SerialWrite(LG_TTYS2_BASE, UART_IER, 0);    // 'rupts off
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, UART_LCR_DLAB); //DLAB = 1
+  LG_SerialWrite(LG_TTYS2_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
+  LG_SerialWrite(LG_TTYS2_BASE, UART_DLM, 0x0);  // DLM = 0x0
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
+  LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0x0); // FCR = No FIFO 
+  LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x0); // MCR = 
   
   // DEFAULT event timer poll frequency is 75 usec, but need to
   // increase by 3000 instead of 1000 to get timing right for new
@@ -1163,7 +1269,6 @@ static void __exit laser_exit(void)
   platform_driver_unregister(&lg_platform_driver);
   return;
 }
-
 module_init(laser_init);
 module_exit(laser_exit);
 
