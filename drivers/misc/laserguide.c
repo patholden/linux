@@ -29,9 +29,12 @@
 #include <linux/slab.h>
 #include <linux/laser_api.h>
 #include <linux/laser_dev.h>
+#include <linux/serial_reg.h>
 
-#define LG_VERSION "0.2"
-#define DEV_NAME   "laser"
+#define LG_VERSION 	 "0.3"
+#define DEV_NAME   	 "laser"
+#define DEV_NAME_LGTTYS1 "lgttyS1"
+#define DEV_NAME_LGTTYS2 "lgttyS2"
 
 static struct lg_xydata lg_display_data[MAX_XYPOINTS];
 static uint16_t tgfind_word[MAX_TGFIND_BUFFER];
@@ -44,10 +47,14 @@ int32_t  lg_roi_on     = 0;
 int32_t  lg_roi_del    = 0;
 static int lg_shutter_open;
 uint8_t lg_threshold = 0;
+uint32_t status = 0;
 
 // DEFINES used by event timer
-#define UARTPORT 0x3F8
+#define UARTPORT LG_TTYS1_BASE //0x2F8 
 #define UCOUNT   500
+
+//DEFINES used by LG serial port functions 
+#define BOTH_EMPTY (UART_LSR_TEMT | UART_LSR_THRE)
 
 // STATIC FUNCTION PROTOTYPES
 static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer);
@@ -55,7 +62,138 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
 static int lg_pdev_remove(struct platform_device *pdev);
 static int lg_dev_probe(struct platform_device *dev);
 
-// START OF LOCAL FUNCTIONS
+//Simple Serial IO functions
+ssize_t LG_SerialRead1(struct file *file, char __user *buffer, size_t count, loff_t *f_pos)
+{
+    int  value;
+    struct lg_dev *priv = file->private_data;
+
+    if (!priv)
+      return(-EBADF);
+
+    if (count != 1)
+      return(-EINVAL);
+
+    for (;;)
+    {
+     status = inb(LG_TTYS1_BASE + UART_LSR);
+     if ((status & UART_LSR_DR) == UART_LSR_DR) //Rx Ready??
+        break;
+     cpu_relax();
+    }
+
+    value = inb(LG_TTYS1_BASE);
+//    printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
+    if (copy_to_user(buffer, (char *)&value, count))
+      return(-EFAULT);
+    return(count);
+}
+
+
+ssize_t LG_SerialWrite1(struct file *file, const char __user *buffer, size_t count, loff_t *f_pos)
+{
+  int value;
+
+  struct lg_dev *priv = file->private_data;
+
+  if (!priv)
+    return(-EBADF);
+
+  if (count != 1)
+    return -EINVAL;
+
+  for (;;)
+   {
+     status = inb(LG_TTYS1_BASE + UART_LSR);
+     if ((status & BOTH_EMPTY) == BOTH_EMPTY) //Tx Empty??
+     	break;
+     cpu_relax();
+   } 
+
+  if(copy_from_user((char *)&value, buffer, count))
+    {
+      return -EFAULT;
+    }
+
+  outb(value, LG_TTYS1_BASE);
+ // printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
+  return(count);
+}
+
+ssize_t LG_SerialRead2(struct file *file, char __user *buffer, size_t count, loff_t *f_pos)
+{
+    int value;
+    struct lg_dev *priv = file->private_data;
+
+    if (!priv)
+      return(-EBADF);
+
+    if (count != 1)
+      return(-EINVAL);
+
+    for (;;)
+    { 
+     status = inb(LG_TTYS2_BASE + UART_LSR);
+     if ((status & UART_LSR_DR) == UART_LSR_DR) //Rx Ready??
+        break;
+     cpu_relax();
+    }
+
+    value = inb(LG_TTYS2_BASE);
+//    printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
+    if (copy_to_user(buffer, (char *)&value, count))
+      return(-EFAULT);
+    return(count);
+}
+
+
+ssize_t LG_SerialWrite2(struct file *file, const char __user *buffer, size_t count, loff_t *f_pos)
+{
+  int value;
+  struct lg_dev *priv = file->private_data;
+
+  if (!priv)
+    return(-EBADF);
+
+  if (count != 1)
+    return -EINVAL;
+
+  for (;;)
+   {
+     status = inb(LG_TTYS2_BASE + UART_LSR);
+     if ((status & BOTH_EMPTY) == BOTH_EMPTY) //Tx Empty??
+        break;
+     cpu_relax();
+   }
+
+  if(copy_from_user((char *)&value, buffer, count))
+    {
+      return -EFAULT;
+    }
+
+  outb(value, LG_TTYS2_BASE);
+ // printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
+  return(count);
+}
+
+
+//Start of Local Functions
+//The following 2 are used to init the serial port registers in the FPGA
+static uint8_t LG_SerialRead(int port, int offset)
+{
+	uint8_t value;
+	value = inb(port + offset);
+//	printk(KERN_CRIT "\nLG_SerialRead -- ADDR: %x DATA: %x", port + offset, value);
+        return(value);
+}
+
+
+static void LG_SerialWrite(int port, int offset, int value)
+{
+        outb(value, port + offset);
+//	printk(KERN_CRIT "\nLG_SerialWrite -- ADDR: %x DATA: %x", port + offset, value);
+}
+
 static void lg_get_xydata_ltcval(int16_t *output_val, int16_t input_val)
 {
   if (!input_val)
@@ -874,17 +1012,49 @@ static const struct file_operations lg_fops = {
   .open             = lg_open,        /* lg_open */
   .release          = lg_release,     /* lg_release */
 };
+
+static const struct file_operations lg_ttyS1fops = {
+  .owner            = THIS_MODULE,
+  .read             = LG_SerialRead1,  /* read */
+  .write            = LG_SerialWrite1, /* write */
+  .open             = lg_open,        /* open */
+  .release          = lg_release,     /* release */
+};
+
+static const struct file_operations lg_ttyS2fops = {
+  .owner            = THIS_MODULE,
+  .read             = LG_SerialRead2,  /* read */
+  .write            = LG_SerialWrite2, /* write */
+  .open             = lg_open,        /* open */
+  .release          = lg_release,     /* release */
+};
+
 struct miscdevice lg_device = {
   .minor = MISC_DYNAMIC_MINOR,
   .name = DEV_NAME,
   .fops = &lg_fops,
 };
+
+struct miscdevice lg_ttyS1device = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DEV_NAME_LGTTYS1,
+  .fops = &lg_ttyS1fops,
+};
+
+struct miscdevice lg_ttyS2device = {
+  .minor = MISC_DYNAMIC_MINOR,
+  .name = DEV_NAME_LGTTYS2,
+  .fops = &lg_ttyS2fops,
+};
+
 static int lg_dev_probe(struct platform_device *plat_dev)
 {
   struct lg_xydata xydata;
   struct lg_dev *lg_devp;
   struct device *this_device;
   int           rc;
+  unsigned char c;
+  unsigned int ier;
 
   // allocate mem for struct device will work with
   lg_devp = kzalloc(sizeof(struct lg_dev), GFP_KERNEL);
@@ -935,6 +1105,79 @@ static int lg_dev_probe(struct platform_device *plat_dev)
       printk(KERN_CRIT "\nUnable to get IO regs");
       return(-EBUSY);
     }
+
+  // Setup lgttyS1 device
+  lg_devp->lgttyS1.minor = lg_ttyS1device.minor;
+  lg_devp->lgttyS1.name = DEV_NAME_LGTTYS1;
+  lg_devp->lgttyS1.fops = lg_ttyS1device.fops;
+  rc = misc_register(&lg_devp->lgttyS1);
+  if (rc)
+    {
+      printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS1 device, err %d \n", rc);
+      kfree(lg_devp);
+      return(rc);
+    }
+
+  this_device = lg_devp->lgttyS1.this_device;
+  lg_devp->lgttyS1.parent = lg_devp->dev;
+  dev_set_drvdata(this_device, lg_devp);
+  platform_set_drvdata(plat_dev, lg_devp);
+  printk(KERN_INFO "\nAGS-LG: Device lgttyS1 created\n");
+
+  // Obtain IO space for lgttyS1 device
+  if (!request_region(LG_TTYS1_BASE, LG_TTYS1_REGION, DEV_NAME_LGTTYS1))
+    {
+      kfree(lg_devp);
+      misc_deregister(&lg_devp->lgttyS1);
+      printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS1");
+      return(-EBUSY);
+    }
+
+  // Setup lgttyS2 device
+  lg_devp->lgttyS2.minor = lg_ttyS2device.minor;
+  lg_devp->lgttyS2.name = DEV_NAME_LGTTYS2;
+  lg_devp->lgttyS2.fops = lg_ttyS2device.fops;
+  rc = misc_register(&lg_devp->lgttyS2);
+  if (rc)
+    {
+      printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS2 device, err %d \n", rc);
+      kfree(lg_devp);
+      return(rc);
+    }
+
+  this_device = lg_devp->lgttyS2.this_device;
+  lg_devp->miscdev.parent = lg_devp->dev;
+  dev_set_drvdata(this_device, lg_devp);
+  platform_set_drvdata(plat_dev, lg_devp);
+  printk(KERN_INFO "\nAGS-LG: Device lgttyS2 created\n");
+
+  // Obtain IO space for lgttyS2 device
+  if (!request_region(LG_TTYS2_BASE, LG_TTYS2_REGION, DEV_NAME_LGTTYS2))
+    {
+      kfree(lg_devp);
+      misc_deregister(&lg_devp->lgttyS2);
+      printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS2");
+      return(-EBUSY);
+    }
+
+  //Initialize serial ports
+  //LGTTYS1 Front end serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+  LG_SerialWrite(LG_TTYS1_BASE, UART_IER, 0);    // 'rupts off
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, UART_LCR_DLAB); //DLAB = 1
+  LG_SerialWrite(LG_TTYS1_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
+  LG_SerialWrite(LG_TTYS1_BASE, UART_DLM, 0x0);  // DLM = 0x0
+  LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
+  LG_SerialWrite(LG_TTYS1_BASE, UART_FCR, 0x0); // FCR = No FIFO 
+  LG_SerialWrite(LG_TTYS1_BASE, UART_MCR, 0x0); // MCR = 
+
+  //LGTTYS2 Laser Control Board serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+  LG_SerialWrite(LG_TTYS2_BASE, UART_IER, 0);    // 'rupts off
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, UART_LCR_DLAB); //DLAB = 1
+  LG_SerialWrite(LG_TTYS2_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
+  LG_SerialWrite(LG_TTYS2_BASE, UART_DLM, 0x0);  // DLM = 0x0
+  LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
+  LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0x0); // FCR = No FIFO 
+  LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x0); // MCR = 
   
   // DEFAULT event timer poll frequency is 75 usec, but need to
   // increase by 3000 instead of 1000 to get timing right for new
@@ -961,7 +1204,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   outb(lg_devp->lg_ctrl2_store, LG_IO_CNTRL2);
 
   // All initialization done, so enable timer
-  printk(KERN_INFO "\nAGS-LG:Laser Guide miscdevice installed, timer created.\n");
+  printk(KERN_INFO "\nAGS-LG: Laser boardcomm Devices installed, initialized and timer created.\n");
   return(0);
 }
 static struct platform_device lg_dev = {
@@ -991,7 +1234,11 @@ static int lg_pdev_remove(struct platform_device *pdev)
   this_device = lg_devp->miscdev.this_device;
   hrtimer_cancel(&lg_devp->lg_timer);
   release_region(LG_BASE, LASER_REGION);
+  release_region(LG_TTYS1_BASE, LG_TTYS1_REGION);
+  release_region(LG_TTYS2_BASE, LG_TTYS2_REGION);
   misc_deregister(&lg_devp->miscdev);
+  misc_deregister(&lg_devp->lgttyS1);
+  misc_deregister(&lg_devp->lgttyS2);
   kfree(lg_devp);
   return(0);
 }
@@ -1028,4 +1275,3 @@ module_exit(laser_exit);
 MODULE_AUTHOR("Patricia A. Holden for Assembly Guidance Systems");
 MODULE_DESCRIPTION("Driver for AGS Laser Guidance System 2");
 MODULE_LICENSE("GPL");
-
