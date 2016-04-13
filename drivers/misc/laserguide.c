@@ -81,19 +81,19 @@ static void lg_adjust_xypoints(struct lg_move_data *lg_data)
 {
     int32_t temp_val1;
 
-    if (lg_data->xy_delta.xdata)
+    if (lg_data->xy_delta.xdata != 0)
       {
 	temp_val1 = lg_data->xy_curpt.xdata + lg_data->xy_delta.xdata;
 	lg_data->xy_curpt.xdata = temp_val1 % SHORT_MAX_OVERFLOW;
 	if (lg_data->xy_curpt.xdata == 0)
-	  lg_data->xy_curpt.xdata++;
+	  lg_data->xy_curpt.xdata = LTC1597_BIPOLAR_OFFSET_NEG;
       }
-    if (lg_data->xy_delta.ydata)
+    if (lg_data->xy_delta.ydata != 0)
       {
 	temp_val1 = lg_data->xy_curpt.ydata + lg_data->xy_delta.ydata;
 	lg_data->xy_curpt.ydata = temp_val1 % SHORT_MAX_OVERFLOW;
 	if (lg_data->xy_curpt.ydata == 0)
-	  lg_data->xy_curpt.ydata++;
+	  lg_data->xy_curpt.ydata = LTC1597_BIPOLAR_OFFSET_NEG;
       }
     return;
 }
