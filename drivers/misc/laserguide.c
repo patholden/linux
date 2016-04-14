@@ -10,6 +10,8 @@
  *      available to control the laser guidance system.
  */
 
+
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/uaccess.h>
@@ -74,16 +76,12 @@ ssize_t LG_SerialRead1(struct file *file, char __user *buffer, size_t count, lof
     if (count != 1)
       return(-EINVAL);
 
-    for (;;)
-    {
-     status = inb(LG_TTYS1_BASE + UART_LSR);
-     if ((status & UART_LSR_DR) == UART_LSR_DR) //Rx Ready??
-        break;
-     cpu_relax();
-    }
+    status = inb(LG_TTYS1_BASE + UART_LSR);
+    if ((status & UART_LSR_DR) != UART_LSR_DR) //Rx Ready??
+      return(-EAGAIN);
 
     value = inb(LG_TTYS1_BASE);
-//    printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
+    //printk(KERN_CRIT "\nLGTTYS1 -- LSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %2x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
     if (copy_to_user(buffer, (char *)&value, count))
       return(-EFAULT);
     return(count);
@@ -102,13 +100,9 @@ ssize_t LG_SerialWrite1(struct file *file, const char __user *buffer, size_t cou
   if (count != 1)
     return -EINVAL;
 
-  for (;;)
-   {
-     status = inb(LG_TTYS1_BASE + UART_LSR);
-     if ((status & BOTH_EMPTY) == BOTH_EMPTY) //Tx Empty??
-     	break;
-     cpu_relax();
-   } 
+  status = inb(LG_TTYS1_BASE + UART_LSR);
+  if ((status & BOTH_EMPTY) != BOTH_EMPTY) //Tx Empty??
+    return(EAGAIN);
 
   if(copy_from_user((char *)&value, buffer, count))
     {
@@ -116,7 +110,7 @@ ssize_t LG_SerialWrite1(struct file *file, const char __user *buffer, size_t cou
     }
 
   outb(value, LG_TTYS1_BASE);
- // printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
+  //printk(KERN_CRIT "\nLGTTYS1 -- LSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %2x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
   return(count);
 }
 
@@ -131,16 +125,12 @@ ssize_t LG_SerialRead2(struct file *file, char __user *buffer, size_t count, lof
     if (count != 1)
       return(-EINVAL);
 
-    for (;;)
-    { 
-     status = inb(LG_TTYS2_BASE + UART_LSR);
-     if ((status & UART_LSR_DR) == UART_LSR_DR) //Rx Ready??
-        break;
-     cpu_relax();
-    }
+    status = inb(LG_TTYS2_BASE + UART_LSR);
+    if ((status & UART_LSR_DR) != UART_LSR_DR) //Rx Ready??
+ 	return(-EAGAIN);
 
     value = inb(LG_TTYS2_BASE);
-//    printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
+//    printk(KERN_CRIT "\nLGTTYS2 -- LSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %2x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
     if (copy_to_user(buffer, (char *)&value, count))
       return(-EFAULT);
     return(count);
@@ -158,13 +148,9 @@ ssize_t LG_SerialWrite2(struct file *file, const char __user *buffer, size_t cou
   if (count != 1)
     return -EINVAL;
 
-  for (;;)
-   {
-     status = inb(LG_TTYS2_BASE + UART_LSR);
-     if ((status & BOTH_EMPTY) == BOTH_EMPTY) //Tx Empty??
-        break;
-     cpu_relax();
-   }
+  status = inb(LG_TTYS2_BASE + UART_LSR);
+  if ((status & BOTH_EMPTY) != BOTH_EMPTY) //Tx Empty??
+    return(-EAGAIN);
 
   if(copy_from_user((char *)&value, buffer, count))
     {
@@ -172,7 +158,7 @@ ssize_t LG_SerialWrite2(struct file *file, const char __user *buffer, size_t cou
     }
 
   outb(value, LG_TTYS2_BASE);
- // printk(KERN_CRIT "\nLSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
+  //printk(KERN_CRIT "\nLGTTYS2 -- LSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
   return(count);
 }
 
@@ -219,19 +205,19 @@ static void lg_adjust_xypoints(struct lg_move_data *lg_data)
 {
     int32_t temp_val1;
 
-    if (lg_data->xy_delta.xdata != 0)
+    if (lg_data->xy_delta.xdata)
       {
 	temp_val1 = lg_data->xy_curpt.xdata + lg_data->xy_delta.xdata;
 	lg_data->xy_curpt.xdata = temp_val1 % SHORT_MAX_OVERFLOW;
 	if (lg_data->xy_curpt.xdata == 0)
-	  lg_data->xy_curpt.xdata = LTC1597_BIPOLAR_OFFSET_NEG;
+	  lg_data->xy_curpt.xdata++;
       }
-    if (lg_data->xy_delta.ydata != 0)
+    if (lg_data->xy_delta.ydata)
       {
 	temp_val1 = lg_data->xy_curpt.ydata + lg_data->xy_delta.ydata;
 	lg_data->xy_curpt.ydata = temp_val1 % SHORT_MAX_OVERFLOW;
 	if (lg_data->xy_curpt.ydata == 0)
-	  lg_data->xy_curpt.ydata = LTC1597_BIPOLAR_OFFSET_NEG;
+	  lg_data->xy_curpt.ydata++;
       }
     return;
 }
@@ -1167,7 +1153,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   LG_SerialWrite(LG_TTYS1_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
   LG_SerialWrite(LG_TTYS1_BASE, UART_DLM, 0x0);  // DLM = 0x0
   LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
-  LG_SerialWrite(LG_TTYS1_BASE, UART_FCR, 0x0); // FCR = No FIFO 
+  LG_SerialWrite(LG_TTYS1_BASE, UART_FCR, 0xc7); // FCR = 14 bytes 
   LG_SerialWrite(LG_TTYS1_BASE, UART_MCR, 0x0); // MCR = 
 
   //LGTTYS2 Laser Control Board serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
@@ -1176,7 +1162,7 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   LG_SerialWrite(LG_TTYS2_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
   LG_SerialWrite(LG_TTYS2_BASE, UART_DLM, 0x0);  // DLM = 0x0
   LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
-  LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0x0); // FCR = No FIFO 
+  LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0xc7); // FCR = 14 bytes 
   LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x0); // MCR = 
   
   // DEFAULT event timer poll frequency is 75 usec, but need to
