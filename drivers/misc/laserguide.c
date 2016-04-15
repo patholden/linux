@@ -710,7 +710,7 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
 {
   struct lg_dev     *priv;
   void __user       *argp = (void __user *)arg;
-  uint32_t          ctl2_val;
+  uint32_t          inp_val;
   
   priv = (struct lg_dev *)file->private_data;
   if (!priv)
@@ -741,8 +741,8 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
       }
     break;
   case LGGETCTL2STAT:
-    ctl2_val = inb(LG_IO_CNTRL2);
-    if (copy_to_user(argp, &ctl2_val, sizeof(uint32_t)))
+    inp_val = inb(LG_IO_CNTRL2);
+    if (copy_to_user(argp, &inp_val, sizeof(uint32_t)))
       {
 	printk(KERN_ERR "\nAGS-LG:Error occurred for message %x from user",cmd);
         return(-EFAULT);
@@ -755,6 +755,14 @@ long lg_ioctl(struct file *file, unsigned int cmd, unsigned long arg )
         return(-EFAULT);
       }
     break;
+  case LGGETFPGAVERSION:
+    inp_val = (inb(LG_FPGA_REV1_IO) << 8) + inb(LG_FPGA_REV2_IO);
+    if (copy_to_user(argp, &inp_val, sizeof(uint32_t)))
+      {
+	printk(KERN_ERR "\nAGS-LG:Error occurred for message %x from user",cmd);
+        return(-EFAULT);
+      }
+    break;    
   default:
     return(-EINVAL);
   }

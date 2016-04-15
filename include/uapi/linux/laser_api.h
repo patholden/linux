@@ -29,6 +29,10 @@
 #define   LASEREND	     0x380
 #define   LASER_REGION (LASEREND-LG_BASE)
 
+// Next two addresses are used strictly for FPGA revision information
+#define   LG_FPGA_REV1_IO    0x396         // FPGA version 1 register
+#define   LG_FPGA_REV2_IO    0x398         // FPGA version 2 register
+
 //This area is the same as the ISA serial port region for the 1st 2 serial ports
 //Depends on the 8250 device support being turned off in the kernel
 #define   LG_TTYS2_BASE      0x3E8
@@ -223,6 +227,6 @@ struct cmd_rw {
 #define   LGGETQCCOUNTER  _IOR(LG_IOCNUM, 0xB7, unsigned int)
 #define   LGGETCTL2STAT   _IOR(LG_IOCNUM, 0xB8, unsigned int)
 #define   LGGETEVENTTIMES _IOR(LG_IOCNUM, 0xB9, struct event_times)
-#define   LGGETHOBBSTIMES _IOR(LG_IOCNUM, 0xB9, struct hobbs_ctrs)
-
+#define   LGGETHOBBSTIMES _IOR(LG_IOCNUM, 0xBA, struct hobbs_ctrs)
+#define   LGGETFPGAVERSION _IOR(LG_IOCNUM, 0xBB, unsigned int)
 #endif  /*  _LASERIOCTL_H  */
