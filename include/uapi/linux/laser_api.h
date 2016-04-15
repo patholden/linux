@@ -39,7 +39,6 @@
 #define   LG_TTYS1_END	     0x300
 #define   LG_TTYS1_REGION (LG_TTYS1_END-LG_TTYS1_BASE)    
 
-
 // Control flags for IO-writes
 #define  BEAMONISSET    0x1
 #define  BEAMONNOTSET   0xFE
@@ -113,10 +112,12 @@ typedef enum{
   CMDR_GETQCFLAG,
   CMDW_DOLITEMOVE,
   CMDW_STOPCMD,
+  CMDW_LAST                    // DO NOT ADD BELOW HERE
 }lg_cmd_enums;
 
 // CMD-WRITE DEFINES
-#define CMD_LAST CMDW_STOPCMD   // NOTE:  Change this if appending new commands
+#define CMD_LAST CMDW_LAST    // NOTE:  This is used by lg_write to validate
+                              // incoming commands.
 #define MAX_TARGETS       24
 #define MAX_XYPOINTS    2048 * MAX_TARGETS * 2 
 #define MAX_LG_BUFFER   MAX_XYPOINTS * sizeof(struct lg_xydata)  /* maximum size of lg_data[] */

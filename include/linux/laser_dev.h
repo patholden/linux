@@ -1,22 +1,22 @@
 #ifndef _LASERDEV_H
 #define _LASERDEV_H
-/*     specific changes for the laserguide system  */
-
-/* NOTE1:  lg_out_data is an array of XY and control-flag data.  X & Y MUST */
+/******************************************************************************/
+/*                                                                            */
+/*     Specific changes for the LaserVision system                            */
+/* NOTE1:  lg_out_data is an array of XY and control-flag data.  X & Y MUST   */
 /*         use OUTB and even-based byte (high byte) MUST be last because data */
-/*         is clocked into DAC on that byte write.  */
-/* NOTE2:  LTC1597 spec calls for bipolar 16 bit values to produce correct  */
-/*         +/- VREF output voltages. Refer to LTC1597 Data sheet, "Bipolar  */
-/*         Offset Binary Code Table" for details.  */     
-/*   Intel x86s are little endian, so, a position is four 16-bit values:     */
-/*      X position, low word  */
-/* for low byte (1st), also bit 7   strobe bit   */
-/*                          bit 6   unblank      */
-/*      X position, high word */
-/*      Y position, low word  */
-/*      Y position, high word */
-/*  please also note that the "write" routine must be given  */
-/*  single-byte array (each position being 8 bytes)        */
+/*         is clocked into DAC on that byte write.                            */
+/* NOTE2:  LTC1597 spec calls for bipolar 16 bit values to produce correct    */
+/*         +/- VREF output voltages. Refer to Linear Technologies LTC1597     */
+/*         Data sheet, "Bipolar Offset Binary Code Table                      */
+/*          (table starting with Vref(32,767/32,768)" for details.            */
+/* NOTE3:  Intel x86s are little endian, so, a position is four 16-bit        */
+/*         values:                                                            */
+/*                   X high byte->LG_IO_XH                                    */
+/*                   X low  byte->LG_IO_XL                                    */
+/*                   Y high byte->LG_IO_YH                                    */
+/*                   Y low  byte->LG_IO_YL                                    */
+/******************************************************************************/
 
 // Max # devices allowed for laser (only 1 is initialized right now)
 #define LG_NUM_DEVICES   256

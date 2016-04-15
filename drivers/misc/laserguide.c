@@ -395,7 +395,7 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	  return(-EINVAL);
 	// default sensor period is 30usec, but it takes a while to get data from
 	// sense buffer.  old code used to access buffer via serial port (115200 baud, ie 86.8 usec)
-	// Multiply by 3 if not defined by user for default cycle
+	// Current hardware works better with returning sense data using 400 usec delay.
 	if (!priv->lg_sensor.poll_freq)
 	  priv->lg_sensor.poll_freq = KETIMER_30U;
 	else
