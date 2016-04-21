@@ -81,7 +81,6 @@ ssize_t LG_SerialRead1(struct file *file, char __user *buffer, size_t count, lof
       return(-EAGAIN);
 
     value = inb(LG_TTYS1_BASE);
-    //printk(KERN_CRIT "\nLGTTYS1 -- LSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %2x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
     if (copy_to_user(buffer, (char *)&value, count))
       return(-EFAULT);
     return(count);
@@ -110,7 +109,6 @@ ssize_t LG_SerialWrite1(struct file *file, const char __user *buffer, size_t cou
     }
 
   outb(value, LG_TTYS1_BASE);
-  //printk(KERN_CRIT "\nLGTTYS1 -- LSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %2x", LG_TTYS1_BASE + UART_LSR, status, LG_TTYS1_BASE, value);
   return(count);
 }
 
@@ -130,7 +128,6 @@ ssize_t LG_SerialRead2(struct file *file, char __user *buffer, size_t count, lof
  	return(-EAGAIN);
 
     value = inb(LG_TTYS2_BASE);
-//    printk(KERN_CRIT "\nLGTTYS2 -- LSR_ADDR: %x LSR_STS = %x  RX_ADDR: %X RX_CHAR: %2x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
     if (copy_to_user(buffer, (char *)&value, count))
       return(-EFAULT);
     return(count);
@@ -158,7 +155,6 @@ ssize_t LG_SerialWrite2(struct file *file, const char __user *buffer, size_t cou
     }
 
   outb(value, LG_TTYS2_BASE);
-  //printk(KERN_CRIT "\nLGTTYS2 -- LSR_ADDR: %x LSR_STS = %x  TX_ADDR: %X TX_CHAR: %x", LG_TTYS2_BASE + UART_LSR, status, LG_TTYS2_BASE, value);
   return(count);
 }
 
@@ -169,7 +165,6 @@ static uint8_t LG_SerialRead(int port, int offset)
 {
 	uint8_t value;
 	value = inb(port + offset);
-//	printk(KERN_CRIT "\nLG_SerialRead -- ADDR: %x DATA: %x", port + offset, value);
         return(value);
 }
 
@@ -177,47 +172,60 @@ static uint8_t LG_SerialRead(int port, int offset)
 static void LG_SerialWrite(int port, int offset, int value)
 {
         outb(value, port + offset);
-//	printk(KERN_CRIT "\nLG_SerialWrite -- ADDR: %x DATA: %x", port + offset, value);
+	return;
 }
 
 static void lg_get_xydata_ltcval(int16_t *output_val, int16_t input_val)
 {
-  if (!input_val)
+  if (!input_val)                                       // Value 0 is represented as 0x8000 by LTC1597
     *output_val = LTC1597_BIPOLAR_OFFSET_PLUS;
-  else if ((input_val == LTC1597_BIPOLAR_MAX_INP_VAL1)
-	   || (input_val == LTC1597_BIPOLAR_MAX_INP_VAL2))
-    *output_val = LTC1597_BIPOLAR_OFFSET_MAX;
-  else if (input_val < 0)
+  else if (input_val < 0)                               // Negative values are 0x1->0x7FFF 
     *output_val = (input_val & LTC1597_BIPOLAR_OFFSET_NEG);
   else
-    *output_val = input_val | LTC1597_BIPOLAR_OFFSET_PLUS;
-  // Value of 0 is not valid for DAC
-  if (*output_val == 0)
     {
-      if (*output_val < 0)
-	*output_val = LTC1597_BIPOLAR_OFFSET_NEG;
+      if (input_val >= LTC1597_BIPOLAR_OFFSET_PLUS)    // Positive values are 0x8000->0xFFFF
+	*output_val = input_val;
       else
-	*output_val = LTC1597_BIPOLAR_OFFSET_PLUS;
+	*output_val = input_val | LTC1597_BIPOLAR_OFFSET_PLUS;
     }
   return;
 }
 static void lg_adjust_xypoints(struct lg_move_data *lg_data)
 {
     int32_t temp_val1;
+    int16_t current_val;
 
     if (lg_data->xy_delta.xdata)
       {
+	current_val = lg_data->xy_curpt.xdata;
 	temp_val1 = lg_data->xy_curpt.xdata + lg_data->xy_delta.xdata;
 	lg_data->xy_curpt.xdata = temp_val1 % SHORT_MAX_OVERFLOW;
 	if (lg_data->xy_curpt.xdata == 0)
-	  lg_data->xy_curpt.xdata++;
+	  {
+	    // If the current value of X was negative -> 0 then need
+	    // to adjust correctly to go positive.  Otherwise, go negative
+	    // so that DAC doesn't fault.
+	    if (current_val < 0)
+	      lg_data->xy_curpt.xdata = LTC1597_BIPOLAR_OFFSET_PLUS;
+	    else
+	      lg_data->xy_curpt.xdata = 1;
+	  }
       }
     if (lg_data->xy_delta.ydata)
       {
+	current_val = lg_data->xy_curpt.xdata;
 	temp_val1 = lg_data->xy_curpt.ydata + lg_data->xy_delta.ydata;
 	lg_data->xy_curpt.ydata = temp_val1 % SHORT_MAX_OVERFLOW;
 	if (lg_data->xy_curpt.ydata == 0)
-	  lg_data->xy_curpt.ydata++;
+	  {
+	    // If the current value of Y was negative -> 0 then need
+	    // to adjust correctly to go positive.  Otherwise, go negative
+	    // so that DAC doesn't fault.
+	    if (current_val < 0)
+	      lg_data->xy_curpt.ydata = LTC1597_BIPOLAR_OFFSET_PLUS;
+	    else
+	      lg_data->xy_curpt.ydata = 1;
+	  }
       }
     return;
 }
@@ -267,21 +275,11 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
   outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);  // Apply CNTRL2 settings
 
   // Adjust XY data for producing correct LTC1597 output voltage to DAC
+  // This function also avoids fault condition.
   lg_get_xydata_ltcval((int16_t *)&dac_xval, pDevXYData->xdata);
   lg_get_xydata_ltcval((int16_t *)&dac_yval, pDevXYData->ydata);
-  // Don't allow faults
-  if (dac_xval == 0)
-    {
-      printk(KERN_CRIT "\nBAD INPUT DATA inpX=%x,adjX=%x",pDevXYData->xdata,dac_xval);
-      dac_xval++;
-    }
-    if (dac_yval == 0)
-      {
-	printk(KERN_CRIT "\nBAD INPUT DATA inpY=%x,adjY=%x",pDevXYData->ydata,dac_yval);
-	dac_yval++;
-      return;
-    }
- // Write XY data, data is applied to DAC input after lo byte is written
+
+  // Write XY data, data is applied to DAC input after lo byte is written
   // so sequence is important.  hi byte then lo byte.
   xhi = (int8_t)(dac_xval >> 8) & 0xFF;
   xlo = (int8_t)(dac_xval & 0xFF);
@@ -347,7 +345,7 @@ static int lg_proc_disp_cmd(struct cmd_rw_dispdata *p_cmd_disp, struct lg_dev *p
 	if (priv->lg_display.nPoints > MAX_XYPOINTS)
 	  return(-EINVAL);
       }
-    priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq * 3000;
+    priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq * 2000;
     priv->lg_state = LGSTATE_DISPLAY;
     priv->lg_ctrl2_store |= LASERENABLE;
     outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
@@ -844,10 +842,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    // When kind of close to target it takes up to 250 usec to start
 	    // to see a change in sensor data.  When on target it only takes
 	    // 3-4 usec to see a change in sensor data.
-	    if (priv->lg_sensor.do_coarse)
-	      priv->lg_sensor.poll_freq = SENSOR_COARSE_READ_FREQ;
-	    else
-	      priv->lg_sensor.poll_freq = SENSOR_FINE_READ_FREQ;
+	    priv->lg_sensor.poll_freq = SENSOR_READ_FREQ;
 	    priv->lg_state = LGSTATE_SENSEREAD;
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
@@ -859,11 +854,12 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    ((priv->lg_sensor.cur_index - priv->lg_sensor.start_index) <= priv->lg_sensor.nPoints))
 	  {
 	    // Read in light-sensor info.
+	    // NOTE:  Data from sensor logic is inverted by the FPGA.
 	    tg_find_val1 = inb(TFPORTRL);
 	    tg_find_val0 = inb(TFPORTRH) & 0x03;
 	    tfword =  (tg_find_val0 << 8) | tg_find_val1;
 	    tgfind_word[priv->lg_sensor.cur_index++] = tfword;
-	    priv->lg_sensor.poll_freq = SENSOR_DEF_FREQ;
+	    priv->lg_sensor.poll_freq = SENSOR_WRITE_FREQ;
 	    priv->lg_state = LGSTATE_SENSE;
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
@@ -1041,121 +1037,8 @@ struct miscdevice lg_ttyS2device = {
   .fops = &lg_ttyS2fops,
 };
 
-static int lg_dev_probe(struct platform_device *plat_dev)
-{
-  struct lg_xydata xydata;
-  struct lg_dev *lg_devp;
-  struct device *this_device;
-  int           rc;
-  unsigned char c;
-  unsigned int ier;
-
-  // allocate mem for struct device will work with
-  lg_devp = kzalloc(sizeof(struct lg_dev), GFP_KERNEL);
-  if (!lg_devp)
-    {
-      pr_err("kzalloc() failed for laser device struct\n");
-      return(-ENOMEM);
-    }
-
-  memset((char *)lg_devp,0,sizeof(struct lg_dev));
-  memset((char *)&lg_display_data,0, lg_devp->lg_disp_count);
-  platform_set_drvdata(plat_dev, lg_devp);
-  lg_devp->dev = &plat_dev->dev;
-
-  // We don't use kref or mutex locks yet.
-  kref_init(&lg_devp->ref);
-  mutex_init(&lg_devp->lg_mutex);
-
-  dev_set_drvdata(lg_devp->dev, lg_devp);
-  spin_lock_init(&lg_devp->lock);
-  INIT_LIST_HEAD(&lg_devp->free);
-  INIT_LIST_HEAD(&lg_devp->used);
-  init_waitqueue_head(&lg_devp->wait);
-
-  // Setup misc device
-  lg_devp->miscdev.minor = lg_device.minor;
-  lg_devp->miscdev.name = DEV_NAME;
-  lg_devp->miscdev.fops = lg_device.fops;
-  rc = misc_register(&lg_devp->miscdev);
-  if (rc)
-    {
-      printk(KERN_ERR "AGS-LG:  Failed to register Laser misc_device, err %d \n", rc);
-      kfree(lg_devp);
-      return(rc);
-    }
-
-  this_device = lg_devp->miscdev.this_device;
-  lg_devp->miscdev.parent = lg_devp->dev;
-  dev_set_drvdata(this_device, lg_devp);
-  platform_set_drvdata(plat_dev, lg_devp);
-  printk(KERN_INFO "\nAGS-LG:laser misc-device created\n");
-
-  // Obtain IO space for device
-  if (!request_region(LG_BASE, LASER_REGION, DEV_NAME))
-    {
-      kfree(lg_devp);
-      misc_deregister(&lg_devp->miscdev);
-      printk(KERN_CRIT "\nUnable to get IO regs");
-      return(-EBUSY);
-    }
-
-  // Setup lgttyS1 device
-  lg_devp->lgttyS1.minor = lg_ttyS1device.minor;
-  lg_devp->lgttyS1.name = DEV_NAME_LGTTYS1;
-  lg_devp->lgttyS1.fops = lg_ttyS1device.fops;
-  rc = misc_register(&lg_devp->lgttyS1);
-  if (rc)
-    {
-      printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS1 device, err %d \n", rc);
-      kfree(lg_devp);
-      return(rc);
-    }
-
-  this_device = lg_devp->lgttyS1.this_device;
-  lg_devp->lgttyS1.parent = lg_devp->dev;
-  dev_set_drvdata(this_device, lg_devp);
-  platform_set_drvdata(plat_dev, lg_devp);
-  printk(KERN_INFO "\nAGS-LG: Device lgttyS1 created\n");
-
-  // Obtain IO space for lgttyS1 device
-  if (!request_region(LG_TTYS1_BASE, LG_TTYS1_REGION, DEV_NAME_LGTTYS1))
-    {
-      kfree(lg_devp);
-      misc_deregister(&lg_devp->lgttyS1);
-      printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS1");
-      return(-EBUSY);
-    }
-
-  // Setup lgttyS2 device
-  lg_devp->lgttyS2.minor = lg_ttyS2device.minor;
-  lg_devp->lgttyS2.name = DEV_NAME_LGTTYS2;
-  lg_devp->lgttyS2.fops = lg_ttyS2device.fops;
-  rc = misc_register(&lg_devp->lgttyS2);
-  if (rc)
-    {
-      printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS2 device, err %d \n", rc);
-      kfree(lg_devp);
-      return(rc);
-    }
-
-  this_device = lg_devp->lgttyS2.this_device;
-  lg_devp->miscdev.parent = lg_devp->dev;
-  dev_set_drvdata(this_device, lg_devp);
-  platform_set_drvdata(plat_dev, lg_devp);
-  printk(KERN_INFO "\nAGS-LG: Device lgttyS2 created\n");
-
-  // Obtain IO space for lgttyS2 device
-  if (!request_region(LG_TTYS2_BASE, LG_TTYS2_REGION, DEV_NAME_LGTTYS2))
-    {
-      kfree(lg_devp);
-      misc_deregister(&lg_devp->lgttyS2);
-      printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS2");
-      return(-EBUSY);
-    }
-
-  //Initialize serial ports
-  //LGTTYS1 Front end serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
+static void serial_port_init(void)
+{    //LGTTYS1 Front end serial port: 115200, N, 8, 1, no 'rupts, force DTR and RTS
   LG_SerialWrite(LG_TTYS1_BASE, UART_IER, 0);    // 'rupts off
   LG_SerialWrite(LG_TTYS1_BASE, UART_LCR, UART_LCR_DLAB); //DLAB = 1
   LG_SerialWrite(LG_TTYS1_BASE, UART_DLL, 0x1 ); // DLL = 0x1 
@@ -1171,35 +1054,175 @@ static int lg_dev_probe(struct platform_device *plat_dev)
   LG_SerialWrite(LG_TTYS2_BASE, UART_DLM, 0x0);  // DLM = 0x0
   LG_SerialWrite(LG_TTYS2_BASE, UART_LCR, 0x3);  // DLAB = 0, 8bits, no parity, 1 stop bit
   LG_SerialWrite(LG_TTYS2_BASE, UART_FCR, 0xc7); // FCR = 14 bytes 
-  LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x0); // MCR = 
-  
-  // DEFAULT event timer poll frequency is 75 usec, but need to
-  // increase by 3000 instead of 1000 to get timing right for new
-  // laservision product.
-  lg_devp->poll_frequency = KETIMER_75U * 3000;
-  hrtimer_init(&lg_devp->lg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-  lg_devp->lg_timer.function = lg_evt_hdlr;
-  hrtimer_start(&lg_devp->lg_timer, ktime_set(0, lg_devp->poll_frequency), HRTIMER_MODE_REL);
-  do_gettimeofday(&lg_devp->last_ts);
-  
-  /* move to 0,0 position */
-  memset((char *)&xydata, 0, sizeof(struct lg_xydata));
-  lg_write_io_to_dac(lg_devp, &xydata);
+  LG_SerialWrite(LG_TTYS2_BASE, UART_MCR, 0x0); // MCR =
+  return;
+} 
 
-  // Initialize buffers to 0
-  memset((char *)&tgfind_word, 0, sizeof(tgfind_word));
+static int laser_dev_init(struct lg_dev *lg_devp)
+{
+    struct lg_xydata xydata;
 
-  // Start in idle state so timer handler does nothing
-  lg_devp->lg_state = LGSTATE_IDLE;
-  lg_devp->lg_disp_count = MAX_XYPOINTS * sizeof(struct lg_xydata);
+    if (!lg_devp)
+      return(-EINVAL);
   
-  // Start with READY-LED ON TO INDICATE NOT READY TO RUN.
-  lg_devp->lg_ctrl2_store = RDYLEDON;
-  outb(lg_devp->lg_ctrl2_store, LG_IO_CNTRL2);
+    // DEFAULT event timer poll frequency is 75 usec, but need to
+    // increase by 3000 instead of 1000 to get timing right for new
+    // laservision product.
+    lg_devp->poll_frequency = KETIMER_75U * 3000;
+    hrtimer_init(&lg_devp->lg_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    lg_devp->lg_timer.function = lg_evt_hdlr;
+    hrtimer_start(&lg_devp->lg_timer, ktime_set(0, lg_devp->poll_frequency), HRTIMER_MODE_REL);
+    do_gettimeofday(&lg_devp->last_ts);
 
-  // All initialization done, so enable timer
-  printk(KERN_INFO "\nAGS-LG: Laser boardcomm Devices installed, initialized and timer created.\n");
-  return(0);
+    /* move to 0,0 position, laser disabled, beam off */
+    memset((char *)&xydata, 0, sizeof(struct lg_xydata));
+    lg_write_io_to_dac(lg_devp, &xydata);
+
+    // Start in idle state so timer handler does nothing
+    lg_devp->lg_state = LGSTATE_IDLE;
+    lg_devp->lg_disp_count = MAX_XYPOINTS * sizeof(struct lg_xydata);
+  
+    // Initialize buffers to 0
+    memset((char *)&tgfind_word, 0, sizeof(tgfind_word));
+    memset((char *)&lg_display_data,0, lg_devp->lg_disp_count);
+
+    // Start with READY-LED ON TO INDICATE NOT READY TO RUN.
+    lg_devp->lg_ctrl2_store = RDYLEDON;
+    outb(lg_devp->lg_ctrl2_store, LG_IO_CNTRL2);
+    return(0);
+}
+
+static int lg_dev_probe(struct platform_device *plat_dev)
+{
+    struct lg_dev *lg_devp;
+    struct device *this_device;
+    int           rc;
+    uint8_t       fpga_version1;
+    uint8_t       fpga_version2;
+
+    // Check FPGA REV
+    fpga_version1 = inb(LG_FPGA_REV1_IO);
+    fpga_version2 = inb(LG_FPGA_REV2_IO);
+    printk(KERN_INFO "AGS-LG:  FPGA version %02d.%02d",fpga_version1,fpga_version2);
+    if ((fpga_version1 != FPGA_VERSION1) || (fpga_version2 != FPGA_VERSION2))
+      return(-EIO);
+
+    // allocate mem for struct device will work with
+    lg_devp = kzalloc(sizeof(struct lg_dev), GFP_KERNEL);
+    if (!lg_devp)
+      {
+	pr_err("kzalloc() failed for laser device struct\n");
+	return(-ENOMEM);
+      }
+
+    memset((char *)lg_devp,0,sizeof(struct lg_dev));
+    platform_set_drvdata(plat_dev, lg_devp);
+    lg_devp->dev = &plat_dev->dev;
+
+    // We don't use kref or mutex locks yet.
+    kref_init(&lg_devp->ref);
+    mutex_init(&lg_devp->lg_mutex);
+
+    dev_set_drvdata(lg_devp->dev, lg_devp);
+    spin_lock_init(&lg_devp->lock);
+    INIT_LIST_HEAD(&lg_devp->free);
+    INIT_LIST_HEAD(&lg_devp->used);
+    init_waitqueue_head(&lg_devp->wait);
+
+    // Setup misc device
+    lg_devp->miscdev.minor = lg_device.minor;
+    lg_devp->miscdev.name = DEV_NAME;
+    lg_devp->miscdev.fops = lg_device.fops;
+    rc = misc_register(&lg_devp->miscdev);
+    if (rc)
+      {
+	printk(KERN_ERR "AGS-LG:  Failed to register Laser misc_device, err %d \n", rc);
+	kfree(lg_devp);
+	return(rc);
+      }
+
+    this_device = lg_devp->miscdev.this_device;
+    lg_devp->miscdev.parent = lg_devp->dev;
+    dev_set_drvdata(this_device, lg_devp);
+    platform_set_drvdata(plat_dev, lg_devp);
+    printk(KERN_INFO "\nAGS-LG:laser misc-device created\n");
+
+    // Obtain IO space for device
+    if (!request_region(LG_BASE, LASER_REGION, DEV_NAME))
+      {
+	kfree(lg_devp);
+	misc_deregister(&lg_devp->miscdev);
+	printk(KERN_CRIT "\nUnable to get IO regs");
+	return(-EBUSY);
+      }
+
+    // Setup lgttyS1 device
+    lg_devp->lgttyS1.minor = lg_ttyS1device.minor;
+    lg_devp->lgttyS1.name = DEV_NAME_LGTTYS1;
+    lg_devp->lgttyS1.fops = lg_ttyS1device.fops;
+    rc = misc_register(&lg_devp->lgttyS1);
+    if (rc)
+      {
+	printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS1 device, err %d \n", rc);
+	kfree(lg_devp);
+	return(rc);
+      }
+
+    this_device = lg_devp->lgttyS1.this_device;
+    lg_devp->lgttyS1.parent = lg_devp->dev;
+    dev_set_drvdata(this_device, lg_devp);
+    platform_set_drvdata(plat_dev, lg_devp);
+    printk(KERN_INFO "\nAGS-LG: Device lgttyS1 created\n");
+
+    // Obtain IO space for lgttyS1 device
+    if (!request_region(LG_TTYS1_BASE, LG_TTYS1_REGION, DEV_NAME_LGTTYS1))
+      {
+	kfree(lg_devp);
+	misc_deregister(&lg_devp->lgttyS1);
+	printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS1");
+	return(-EBUSY);
+      }
+
+    // Setup lgttyS2 device
+    lg_devp->lgttyS2.minor = lg_ttyS2device.minor;
+    lg_devp->lgttyS2.name = DEV_NAME_LGTTYS2;
+    lg_devp->lgttyS2.fops = lg_ttyS2device.fops;
+    rc = misc_register(&lg_devp->lgttyS2);
+    if (rc)
+      {
+	printk(KERN_ERR "AGS-LG:  Failed to register Laser lgttyS2 device, err %d \n", rc);
+	kfree(lg_devp);
+	return(rc);
+      }
+
+    this_device = lg_devp->lgttyS2.this_device;
+    lg_devp->miscdev.parent = lg_devp->dev;
+    dev_set_drvdata(this_device, lg_devp);
+    platform_set_drvdata(plat_dev, lg_devp);
+    printk(KERN_INFO "\nAGS-LG: Device lgttyS2 created\n");
+
+    // Obtain IO space for lgttyS2 device
+    if (!request_region(LG_TTYS2_BASE, LG_TTYS2_REGION, DEV_NAME_LGTTYS2))
+      {
+	kfree(lg_devp);
+	misc_deregister(&lg_devp->lgttyS2);
+	printk(KERN_CRIT "\nUnable to get IO regs for device lgttyS2");
+	return(-EBUSY);
+      }
+
+    //Initialize serial ports
+    serial_port_init();
+    rc = laser_dev_init(lg_devp);
+    if (rc)
+      {
+	printk(KERN_ERR "AGS-LG:  Failed to initialize Laser device, err %d \n", rc);
+	kfree(lg_devp);
+	return(rc);
+      }
+      
+    // All initialization done, so enable timer
+    printk(KERN_INFO "\nAGS-LG: Laser boardcomm Devices installed, initialized and timer created.\n");
+    return(0);
 }
 static struct platform_device lg_dev = {
   .name   = "laser",

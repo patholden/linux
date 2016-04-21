@@ -28,8 +28,6 @@
 #define LTC1597_BIPOLAR_MAX_INP_VAL2 0x8000
 #define SHORT_MAX_OVERFLOW           0x10000
 #define SENSOR_DEF_FREQ              40
-#define SENSOR_COARSE_READ_FREQ      400
-#define SENSOR_FINE_READ_FREQ        100
 #define SENSOR_MAX_POLL_NUM          100
 
 // state machine defines

@@ -14,6 +14,12 @@
 // In sensor mode, use this as indicator that target may be nearby sensed
 // xy pair
 #define SENSE_MAX_THRESHOLD          0x3F0
+#define SENSOR_WRITE_FREQ            30
+#define SENSOR_READ_FREQ             100
+
+// FPGA register 1 & 2 minimum revision levels
+#define FPGA_VERSION1  0x1    
+#define FPGA_VERSION2  0x2
 
 /*  IO addresses */
 //NOTE: 0x380 & 0x390 are reserved for X86 PIC
