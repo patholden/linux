@@ -199,7 +199,7 @@ static void lg_adjust_xypoints(struct lg_move_data *lg_data)
       {
 	current_val = lg_data->xy_curpt.xdata;
 	temp_val1 = lg_data->xy_curpt.xdata + lg_data->xy_delta.xdata;
-	lg_data->xy_curpt.xdata = temp_val1 % SHORT_MAX_OVERFLOW;
+	lg_data->xy_curpt.xdata = temp_val1 & LTC1597_BIPOLAR_OFFSET_MAX;
 	if (lg_data->xy_curpt.xdata == 0)
 	  {
 	    // If the current value of X was negative -> 0 then need
@@ -215,7 +215,7 @@ static void lg_adjust_xypoints(struct lg_move_data *lg_data)
       {
 	current_val = lg_data->xy_curpt.xdata;
 	temp_val1 = lg_data->xy_curpt.ydata + lg_data->xy_delta.ydata;
-	lg_data->xy_curpt.ydata = temp_val1 % SHORT_MAX_OVERFLOW;
+	lg_data->xy_curpt.ydata = temp_val1 & LTC1597_BIPOLAR_OFFSET_MAX;
 	if (lg_data->xy_curpt.ydata == 0)
 	  {
 	    // If the current value of Y was negative -> 0 then need
