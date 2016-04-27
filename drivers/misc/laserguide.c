@@ -323,9 +323,9 @@ static int lg_proc_pulse_cmd(struct cmd_rw_pulsedata *p_cmd_pulse, struct lg_dev
 	priv->lg_gopulse.poll_freq = KETIMER_150U;
       priv->lg_gopulse.poll_freq *= 1000;
       printk(KERN_INFO "\nAGS-LG LGSTATE_GOPULSE: x=%x,y=%x,freq=%d",priv->lg_gopulse.xy_curpt.xdata,
-	     priv->lg_gopulse.xy_curpt.ydata, priv->lg_gopulse.poll_freq);
+             priv->lg_gopulse.xy_curpt.ydata, priv->lg_gopulse.poll_freq);
       printk(KERN_INFO ", cntr=%d,onval=%d,offval=%d",priv->lg_gopulse.counter,
-	     priv->lg_gopulse.on_val,priv->lg_gopulse.off_val); 
+      	     priv->lg_gopulse.on_val,priv->lg_gopulse.off_val); 
       return(0);
 }
 static int lg_proc_disp_cmd(struct cmd_rw_dispdata *p_cmd_disp, struct lg_dev *priv)
@@ -370,11 +370,26 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	priv->lg_sensor.xy_curpt.ctrl_flags = BRIGHTBEAMISSET | BEAMONISSET | LASERENBISSET;
 	priv->lg_sensor.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
 	priv->lg_sensor.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
-	priv->lg_sensor.start_index = p_cmd_move->movedata.start_index;
+	// priv->lg_sensor.start_index = p_cmd_move->movedata.start_index; 
+	priv->lg_sensor.start_index = 0;  // why is start_index other than zero for search?
 	priv->lg_sensor.cur_index = priv->lg_sensor.start_index;
 	priv->lg_sensor.nPoints = p_cmd_move->movedata.nPoints;
 	priv->lg_sensor.poll_freq = p_cmd_move->movedata.poll_freq;
 	priv->lg_sensor.do_coarse = p_cmd_move->movedata.do_coarse;
+// debug
+/*
+printk(KERN_ERR "\nAGS-LG: sensor xy %x %x f %x del %x %x idx %x %x np %x"
+     , priv->lg_sensor.xy_curpt.xdata
+     , priv->lg_sensor.xy_curpt.ydata
+     , priv->lg_sensor.xy_curpt.ctrl_flags
+     , priv->lg_sensor.xy_delta.xdata
+     , priv->lg_sensor.xy_delta.ydata
+     , priv->lg_sensor.start_index
+     , priv->lg_sensor.cur_index
+     , priv->lg_sensor.nPoints
+     );
+*/
+// debug
 	if (!priv->lg_sensor.nPoints || (priv->lg_sensor.nPoints > MAX_TGFIND_BUFFER))
 	  return(-EINVAL);
 	// default sensor period is 30usec, but it takes a while to get data from
@@ -846,7 +861,8 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    priv->lg_state = LGSTATE_SENSEREAD;
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
+	// hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*(priv->lg_sensor.poll_freq)));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 2000U*(priv->lg_sensor.poll_freq)));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_SENSEREAD:
@@ -858,12 +874,19 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    tg_find_val1 = inb(TFPORTRL);
 	    tg_find_val0 = inb(TFPORTRH) & 0x03;
 	    tfword =  (tg_find_val0 << 8) | tg_find_val1;
+// debug
+/*
+if ( priv->lg_sensor.cur_index == 3 ) {
+printk(KERN_ERR "\nAGS-LG: tgfind xy %x %x  val %x", priv->lg_lastxy.xdata, priv->lg_lastxy.ydata, tfword);
+}
+*/
+// debug
 	    tgfind_word[priv->lg_sensor.cur_index++] = tfword;
 	    priv->lg_sensor.poll_freq = SENSOR_WRITE_FREQ;
 	    priv->lg_state = LGSTATE_SENSE;
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*(priv->lg_sensor.poll_freq)));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_DARKMOVE:
