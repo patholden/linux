@@ -370,7 +370,8 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	priv->lg_sensor.xy_curpt.ctrl_flags = BRIGHTBEAMISSET | BEAMONISSET | LASERENBISSET;
 	priv->lg_sensor.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
 	priv->lg_sensor.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
-	priv->lg_sensor.start_index = p_cmd_move->movedata.start_index;
+	// priv->lg_sensor.start_index = p_cmd_move->movedata.start_index;  -- did not work
+	priv->lg_sensor.start_index = 0;  // make sure that start_index is zero
 	priv->lg_sensor.cur_index = priv->lg_sensor.start_index;
 	priv->lg_sensor.nPoints = p_cmd_move->movedata.nPoints;
 	priv->lg_sensor.poll_freq = p_cmd_move->movedata.poll_freq;
@@ -382,8 +383,8 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	// Current hardware works better with returning sense data using 400 usec delay.
 	if (!priv->lg_sensor.poll_freq)
 	  priv->lg_sensor.poll_freq = KETIMER_30U;
-	else
-	  priv->lg_sensor.poll_freq = priv->lg_sensor.poll_freq * 2;
+	// else
+	//   priv->lg_sensor.poll_freq = priv->lg_sensor.poll_freq * 2;
 	// Write to current location in dark to fix up ghost beam
 	priv->lg_state    = LGSTATE_SENSE;
 	break;
@@ -842,11 +843,13 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    // When kind of close to target it takes up to 250 usec to start
 	    // to see a change in sensor data.  When on target it only takes
 	    // 3-4 usec to see a change in sensor data.
-	    priv->lg_sensor.poll_freq = SENSOR_READ_FREQ;
+	    // ***debug*** priv->lg_sensor.poll_freq = SENSOR_READ_FREQ;  -- need to vary search period
 	    priv->lg_state = LGSTATE_SENSEREAD;
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
+	// hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*(priv->lg_sensor.poll_freq)));
+        // RJL - for now make sensor read time twice that of the write
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 2000U*(priv->lg_sensor.poll_freq)));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_SENSEREAD:
@@ -859,11 +862,11 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    tg_find_val0 = inb(TFPORTRH) & 0x03;
 	    tfword =  (tg_find_val0 << 8) | tg_find_val1;
 	    tgfind_word[priv->lg_sensor.cur_index++] = tfword;
-	    priv->lg_sensor.poll_freq = SENSOR_WRITE_FREQ;
+	    // ***debug*** priv->lg_sensor.poll_freq = SENSOR_WRITE_FREQ;  -- need to vary search period
 	    priv->lg_state = LGSTATE_SENSE;
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, (priv->lg_sensor.poll_freq)));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*(priv->lg_sensor.poll_freq)));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_DARKMOVE:
