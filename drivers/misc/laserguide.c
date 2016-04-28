@@ -848,7 +848,6 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	  }
 	// Restart timer to continue working on data until end of sensor pairs
 	// hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*(priv->lg_sensor.poll_freq)));
-        // RJL - for now make sensor read time twice that of the write
 	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 2000U*(priv->lg_sensor.poll_freq)));
 	return(HRTIMER_RESTART);
 	break;
