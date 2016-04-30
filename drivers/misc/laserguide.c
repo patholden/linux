@@ -51,6 +51,7 @@ static int lg_shutter_open;
 uint8_t lg_threshold = 0;
 uint32_t status = 0;
 
+
 // DEFINES used by event timer
 #define UARTPORT LG_TTYS1_BASE //0x2F8 
 #define UCOUNT   500
@@ -274,13 +275,21 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
     priv->lg_ctrl2_store &= DIMBEAM;
   outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);  // Apply CNTRL2 settings
 
+  // debug  since the scanner DAC calls follow
+  // debug  this actually seems the best place to set lg_lastxy
+  priv->lg_lastxy.xdata = pDevXYData->xdata;
+  priv->lg_lastxy.ydata = pDevXYData->ydata;
+  priv->lg_lastxy.ctrl_flags = pDevXYData->ctrl_flags;
+
+
+
   // Adjust XY data for producing correct LTC1597 output voltage to DAC
   // This function also avoids fault condition.
   lg_get_xydata_ltcval((int16_t *)&dac_xval, pDevXYData->xdata);
   lg_get_xydata_ltcval((int16_t *)&dac_yval, pDevXYData->ydata);
-
   // Write XY data, data is applied to DAC input after lo byte is written
   // so sequence is important.  hi byte then lo byte.
+
   xhi = (int8_t)(dac_xval >> 8) & 0xFF;
   xlo = (int8_t)(dac_xval & 0xFF);
   yhi = (int8_t)(dac_yval >> 8);
@@ -345,6 +354,8 @@ static int lg_proc_disp_cmd(struct cmd_rw_dispdata *p_cmd_disp, struct lg_dev *p
 	if (priv->lg_display.nPoints > MAX_XYPOINTS)
 	  return(-EINVAL);
       }
+    priv->lg_display.start_index = 0;  // always restart display from zero index
+    priv->lg_display.cur_index = 0;
     priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq * 2000;
     priv->lg_state = LGSTATE_DISPLAY;
     priv->lg_ctrl2_store |= LASERENABLE;
@@ -401,6 +412,7 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	priv->lg_darkmove.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
 	priv->lg_darkmove.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
 	priv->lg_darkmove.start_index = p_cmd_move->movedata.start_index;
+	priv->lg_darkmove.start_index = 0;  // force to zero
 	priv->lg_darkmove.cur_index = priv->lg_darkmove.start_index;
 	priv->lg_darkmove.nPoints = p_cmd_move->movedata.nPoints;
 	priv->lg_darkmove.poll_freq = p_cmd_move->movedata.poll_freq;
