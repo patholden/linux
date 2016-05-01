@@ -9,12 +9,9 @@ menu "Congatec CGOS API driver"
 
 config CGOS
 	bool "Congatec CGOS API driver"
-	---help---
-	  Sets up platform device for congatec board support.
-	  misc_device "cgos" and i2c_adapter "ags-i2c" are also
-	  created to support this controller board.
-	  
-	  If unsure, say Y.
+	help
+	  If you want to use the congatec board features you should include
 
+	  If unsure, say Y.
 endmenu
 

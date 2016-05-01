@@ -11,8 +11,7 @@
 KERNELDIR ?= /lib/modules/`uname -r`/build
 CONFIG_CGOS ?= m
 
-C_source = DrvLx.c DrvOsaLx.c ../CgosDrv.c ../Cgeb.c ../CgosAgsI2C.c
-#C_source = DrvLx.c DrvOsaLx.c ../CgosDrv.c ../Cgeb.c
+C_source = DrvLx.c DrvOsaLx.c ../CgosDrv.c ../Cgeb.c
 
 make26_pre16 = $(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 make26 = $(MAKE) -C $(KERNELDIR) M=$(PWD)
@@ -26,16 +25,14 @@ mkcmd = $(shell if [ "$(patchlevel)" == 6 && "$(sublevel)" -lt 16 ]; then echo $
 ifdef KERNELRELEASE
 
 	EXTRA_CFLAGS += -I$(obj)/. -I$(obj)/.. -I$(obj)/../../CgosLib
-	EXTRA_CFLAGS += -I$(obj)/../../../arch/x86/CgosLib/Lx
+	EXTRA_CFLAGS += -I$(obj)/../../CgosLib/Lx
 #	EXTRA_CFLAGS += -O2 -mcmodel=kernel -DAMD64 -fno-strict-aliasing
 #	EXTRA_CFLAGS += -O2 -DAMD64 -fno-strict-aliasing
 	EXTRA_CFLAGS += -O2 -fno-strict-aliasing
 	EXTRA_CFLAGS += -I$(obj)/../..
-	EXTRA_CFLAGS += -I$(obj)/../../../include
-	EXTRA_CFLAGS += -I /home/patti/buildroot/coreutils-8.23/lib
-	obj-$(CONFIG_CGOS) += cgosdrv.o
+	obj-$(CONFIG_CGOS) += cgosdrv.o	
 
-	cgosdrv-objs := DrvLx.o DrvOsaLx.o ../CgosAgsI2C.o ../Cgeb.o ../CgosDrv.o
+	cgosdrv-objs := DrvLx.o DrvOsaLx.o ../Cgeb.o ../CgosDrv.o 
 	clean-files := *.o
 else
 	PWD := $(shell pwd)

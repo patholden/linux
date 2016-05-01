@@ -260,7 +260,8 @@ void machine_kexec(struct kimage *image)
 	if (image->preserve_context)
 		save_processor_state();
 #endif
-
+	
+	pr_info("\nAGS-LG: machine_kexec start");
 	save_ftrace_enabled = __ftrace_enabled_save();
 
 	/* Interrupts aren't acceptable while we reboot */
@@ -322,6 +323,8 @@ void machine_kexec(struct kimage *image)
 #endif
 
 	__ftrace_enabled_restore(save_ftrace_enabled);
+	pr_info("\nAGS-LG: machine_kexec end");
+
 }
 
 void arch_crash_save_vmcoreinfo(void)
