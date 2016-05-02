@@ -14,7 +14,7 @@ source "drivers/of/Kconfig"
 
 source "drivers/parport/Kconfig"
 
-source "drivers/CgosDrv/Lx/Kconfig"
+#source "drivers/CgosDrv/Lx/Kconfig"
 
 source "drivers/pnp/Kconfig"
 

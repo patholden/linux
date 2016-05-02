@@ -70,6 +70,7 @@ static int __init set_bios_reboot(const struct dmi_system_id *d)
 
 void __noreturn machine_real_restart(unsigned int type)
 {
+        pr_info("\nAGS_LG:  restart type %d.\n",type);
 	local_irq_disable();
 
 	/*
