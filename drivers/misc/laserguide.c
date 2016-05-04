@@ -191,45 +191,65 @@ static void lg_get_xydata_ltcval(int16_t *output_val, int16_t input_val)
     }
   return;
 }
+
 static void lg_adjust_xypoints(struct lg_move_data *lg_data)
 {
-    int32_t temp_val1;
-    int16_t current_val;
+    int32_t limit;
 
+         // change xdata only for nonzero x delta
     if (lg_data->xy_delta.xdata)
       {
-	current_val = lg_data->xy_curpt.xdata;
-	temp_val1 = lg_data->xy_curpt.xdata + lg_data->xy_delta.xdata;
-	lg_data->xy_curpt.xdata = temp_val1 & LTC1597_BIPOLAR_OFFSET_MAX;
-	if (lg_data->xy_curpt.xdata == 0)
-	  {
-	    // If the current value of X was negative -> 0 then need
-	    // to adjust correctly to go positive.  Otherwise, go negative
-	    // so that DAC doesn't fault.
-	    if (current_val < 0)
-	      lg_data->xy_curpt.xdata = LTC1597_BIPOLAR_OFFSET_PLUS;
-	    else
-	      lg_data->xy_curpt.xdata = 1;
-	  }
+         // for signed 16-bit integer
+         // keep within limits
+        if ( lg_data->xy_delta.xdata  < 0 )
+          {
+            limit = -LTC1597_BIPOLAR_MAX - lg_data->xy_delta.xdata;
+            if ( lg_data->xy_curpt.xdata <= limit )
+	       lg_data->xy_curpt.xdata = -LTC1597_BIPOLAR_MAX;
+            else 
+	       lg_data->xy_curpt.xdata += lg_data->xy_delta.xdata;
+          }
+        else if ( lg_data->xy_delta.xdata  > 0 )
+          {
+            limit = LTC1597_BIPOLAR_MAX - lg_data->xy_delta.xdata;
+            if ( lg_data->xy_curpt.xdata >= limit )
+	       lg_data->xy_curpt.xdata = LTC1597_BIPOLAR_MAX;
+            else 
+	       lg_data->xy_curpt.xdata += lg_data->xy_delta.xdata;
+          }
+        else
+	    lg_data->xy_curpt.xdata += lg_data->xy_delta.xdata; // should never be reached
       }
+
+         // change xdata only for nonzero y delta
     if (lg_data->xy_delta.ydata)
       {
-	current_val = lg_data->xy_curpt.xdata;
-	temp_val1 = lg_data->xy_curpt.ydata + lg_data->xy_delta.ydata;
-	lg_data->xy_curpt.ydata = temp_val1 & LTC1597_BIPOLAR_OFFSET_MAX;
-	if (lg_data->xy_curpt.ydata == 0)
-	  {
-	    // If the current value of Y was negative -> 0 then need
-	    // to adjust correctly to go positive.  Otherwise, go negative
-	    // so that DAC doesn't fault.
-	    if (current_val < 0)
-	      lg_data->xy_curpt.ydata = LTC1597_BIPOLAR_OFFSET_PLUS;
-	    else
-	      lg_data->xy_curpt.ydata = 1;
-	  }
+         // for signed 16-bit integer
+         // keep within limits
+        if ( lg_data->xy_delta.ydata  < 0 )
+          {
+            limit = -LTC1597_BIPOLAR_MAX - lg_data->xy_delta.ydata;
+            if ( lg_data->xy_curpt.ydata <= limit )
+	       lg_data->xy_curpt.ydata = -LTC1597_BIPOLAR_MAX;
+            else 
+	       lg_data->xy_curpt.ydata += lg_data->xy_delta.ydata;
+          }
+        else if ( lg_data->xy_delta.ydata  > 0 )
+          {
+            limit = LTC1597_BIPOLAR_MAX - lg_data->xy_delta.ydata;
+            if ( lg_data->xy_curpt.ydata >= limit )
+	       lg_data->xy_curpt.ydata = LTC1597_BIPOLAR_MAX;
+            else 
+	       lg_data->xy_curpt.ydata += lg_data->xy_delta.ydata;
+          }
+        else
+	    lg_data->xy_curpt.ydata += lg_data->xy_delta.ydata; // should never be reached
+
       }
+
     return;
 }
+ 
 static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDevXYData)
 {
   int16_t       dac_xval;
@@ -275,8 +295,8 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
     priv->lg_ctrl2_store &= DIMBEAM;
   outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);  // Apply CNTRL2 settings
 
-  // debug  since the scanner DAC calls follow
-  // debug  this actually seems the best place to set lg_lastxy
+  //  since the scanner DAC calls follow
+  //  this actually seems the best place to set lg_lastxy
   priv->lg_lastxy.xdata = pDevXYData->xdata;
   priv->lg_lastxy.ydata = pDevXYData->ydata;
   priv->lg_lastxy.ctrl_flags = pDevXYData->ctrl_flags;
@@ -303,6 +323,7 @@ static inline void lg_write_io_to_dac(struct lg_dev *priv, struct lg_xydata *pDe
   // Strobe bit 0->1 latches data,
   // Strobe bit 1->0 writes data to DAC
   outb(ctrl1_off, LG_IO_CNTRL1);
+
   return;
 }
 static int lg_open(struct inode *inode, struct file *file)
@@ -330,7 +351,7 @@ static int lg_proc_pulse_cmd(struct cmd_rw_pulsedata *p_cmd_pulse, struct lg_dev
       priv->lg_gopulse.poll_freq = p_cmd_pulse->pulsedata.poll_freq;
       if (!priv->lg_gopulse.poll_freq)
 	priv->lg_gopulse.poll_freq = KETIMER_150U;
-      priv->lg_gopulse.poll_freq *= 1000;
+      // priv->lg_gopulse.poll_freq *= 1000;  -- do multiplication at hrtimer call
       printk(KERN_INFO "\nAGS-LG LGSTATE_GOPULSE: x=%x,y=%x,freq=%d",priv->lg_gopulse.xy_curpt.xdata,
 	     priv->lg_gopulse.xy_curpt.ydata, priv->lg_gopulse.poll_freq);
       printk(KERN_INFO ", cntr=%d,onval=%d,offval=%d",priv->lg_gopulse.counter,
@@ -356,7 +377,8 @@ static int lg_proc_disp_cmd(struct cmd_rw_dispdata *p_cmd_disp, struct lg_dev *p
       }
     priv->lg_display.start_index = 0;  // always restart display from zero index
     priv->lg_display.cur_index = 0;
-    priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq * 2000;
+    // the 1000x adjustment is now done at the hrtimer function call
+    priv->lg_display.poll_freq = p_cmd_disp->dispdata.poll_freq;
     priv->lg_state = LGSTATE_DISPLAY;
     priv->lg_ctrl2_store |= LASERENABLE;
     outb(priv->lg_ctrl2_store, LG_IO_CNTRL2);
@@ -420,11 +442,9 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	  priv->lg_darkmove.poll_freq = KETIMER_150U;
 	// Write first set of points now, let event handler do rest
 	priv->lg_darkmove.xy_curpt.ctrl_flags = 0;  // Force ctrl-flags to 0 for dark-move, just in case caller forgot to
+
 	lg_write_io_to_dac(priv, &priv->lg_darkmove.xy_curpt);
-	// Update last, prep for next set of points
-	priv->lg_lastxy.xdata = priv->lg_darkmove.xy_curpt.xdata;
-	priv->lg_lastxy.ydata = priv->lg_darkmove.xy_curpt.ydata;
-	priv->lg_lastxy.ctrl_flags = priv->lg_darkmove.xy_curpt.ctrl_flags;
+
 	lg_adjust_xypoints(&priv->lg_darkmove);
 	priv->lg_state    = LGSTATE_DARKMOVE;
 	break;
@@ -440,13 +460,14 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	priv->lg_litemove.xy_curpt.ctrl_flags = BRIGHTBEAMISSET | BEAMONISSET | LASERENBISSET;
 	priv->lg_litemove.xy_delta.xdata = p_cmd_move->movedata.xy_delta.xdata;
 	priv->lg_litemove.xy_delta.ydata = p_cmd_move->movedata.xy_delta.ydata;
-	priv->lg_litemove.start_index = p_cmd_move->movedata.start_index;
+	// priv->lg_litemove.start_index = p_cmd_move->movedata.start_index;
+	priv->lg_litemove.start_index = 0;
 	priv->lg_litemove.cur_index = priv->lg_litemove.start_index;
 	priv->lg_litemove.nPoints = p_cmd_move->movedata.nPoints;
 	priv->lg_litemove.poll_freq = p_cmd_move->movedata.poll_freq;
 	if (!priv->lg_litemove.poll_freq)
 	  priv->lg_litemove.poll_freq = KETIMER_150U;
-	priv->lg_litemove.poll_freq *= 1000;
+	// priv->lg_litemove.poll_freq *= 1000;  do multiplication at hrtimer call
 	// Write to first location get rid of trails
 	xydata.xdata = priv->lg_litemove.xy_curpt.xdata;
 	xydata.ydata = priv->lg_litemove.xy_curpt.ydata;
@@ -454,11 +475,9 @@ static int lg_proc_move_cmd(struct cmd_rw_movedata *p_cmd_move, struct lg_dev *p
 	udelay(2);
 	// Write to first location, let event handler do rest
 	lg_write_io_to_dac(priv, &priv->lg_litemove.xy_curpt);
-	// Update last, prep for next set of points
-	priv->lg_lastxy.xdata = priv->lg_litemove.xy_curpt.xdata;
-	priv->lg_lastxy.ydata = priv->lg_litemove.xy_curpt.ydata;
-	priv->lg_lastxy.ctrl_flags = priv->lg_litemove.xy_curpt.ctrl_flags;
+
 	lg_adjust_xypoints(&priv->lg_litemove);
+
 	priv->lg_state    = LGSTATE_LITEMOVE;
 	break;      
       default:
@@ -506,10 +525,10 @@ static int lg_proc_cmd(struct cmd_rw *p_cmd_data, struct lg_dev *priv)
     if (p_cmd_data->base.hdr.length != sizeof(struct lg_xydata))
       return(-EINVAL);
     /* Disable state machine, PREPPING FOR NEXT COMMAND SEQUENCE */
-    priv->lg_lastxy.xdata = priv->lg_goangle.xdata = p_cmd_data->base.xydata.xdata;
-    priv->lg_lastxy.ydata = priv->lg_goangle.ydata = p_cmd_data->base.xydata.ydata;
-    priv->lg_lastxy.ctrl_flags = priv->lg_goangle.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
-    lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_lastxy);
+    priv->lg_goangle.xdata = p_cmd_data->base.xydata.xdata;
+    priv->lg_goangle.ydata = p_cmd_data->base.xydata.ydata;
+    priv->lg_goangle.ctrl_flags = p_cmd_data->base.xydata.ctrl_flags;
+    lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_goangle);
     break;
   case CMDW_SETROI:
     if (p_cmd_data->base.hdr.length != sizeof(uint32_t))
@@ -839,10 +858,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	//      1. set calculate new xy pair for next round.
 	//      2. wait for valid data.
 	lg_write_io_to_dac(priv, &priv->lg_sensor.xy_curpt);
-	// Update last just in case user sends get-angle command
-	priv->lg_lastxy.xdata = priv->lg_sensor.xy_curpt.xdata;
-	priv->lg_lastxy.ydata = priv->lg_sensor.xy_curpt.ydata;
-	priv->lg_lastxy.ctrl_flags = priv->lg_sensor.xy_curpt.ctrl_flags;
+
 	if ((priv->lg_sensor.cur_index >= MAX_TGFIND_BUFFER) ||
 	    ((priv->lg_sensor.cur_index - priv->lg_sensor.start_index) >= priv->lg_sensor.nPoints))
 	  priv->lg_state = LGSTATE_SENSEREADY;
@@ -883,9 +899,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
       case LGSTATE_DARKMOVE:
 	// Write current point to DAC.
 	lg_write_io_to_dac(priv, &priv->lg_darkmove.xy_curpt);
-	// Update last just in case user sends get-angle command
-	priv->lg_lastxy.xdata = priv->lg_darkmove.xy_curpt.xdata;
-	priv->lg_lastxy.ydata = priv->lg_darkmove.xy_curpt.ydata;
+
 	// Calculate new data point for next round
 	if ((priv->lg_darkmove.cur_index - priv->lg_darkmove.start_index) < priv->lg_darkmove.nPoints)
 	  {
@@ -896,17 +910,12 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	else
 	  priv->lg_state = LGSTATE_IDLE;
 	// Restart timer to continue working on data until user-app suspends work
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->lg_darkmove.poll_freq));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*priv->lg_darkmove.poll_freq));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_LITEMOVE:
 	// Write current point to DAC.
 	lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_litemove.xy_curpt);
-	// Update last just in case user sends get-angle command
-	// Update last just in case user sends get-angle command
-	priv->lg_lastxy.xdata = priv->lg_litemove.xy_curpt.xdata;
-	priv->lg_lastxy.ydata = priv->lg_litemove.xy_curpt.ydata;
-	priv->lg_lastxy.ydata = priv->lg_litemove.xy_curpt.ctrl_flags;
 	// Calculate new data point for next round
 	if ((priv->lg_litemove.cur_index - priv->lg_litemove.start_index) < priv->lg_litemove.nPoints)
 	  {
@@ -917,7 +926,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	else
 	  priv->lg_state = LGSTATE_IDLE;
 	// Restart timer to continue working on data until user-app suspends work
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->lg_litemove.poll_freq));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*priv->lg_litemove.poll_freq));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_DISPLAY:
@@ -938,11 +947,9 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    udelay(2);
 	  }
 	lg_write_io_to_dac(priv, xydata);
-	// Save current XY point
-	priv->lg_lastxy.xdata = xydata->xdata;
-	priv->lg_lastxy.ydata = xydata->ydata;
-	priv->lg_lastxy.ctrl_flags = xydata->ctrl_flags;
+
 	priv->lg_display.cur_index++;
+
 	/* a negative lg_qc_counter will never do a quick check */
 	if (lg_qc_counter > 0)
 	  lg_qc_counter--;   /* decrement counter */
@@ -952,7 +959,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 	    priv->lg_state = LGSTATE_IDLE;      /*  go into the idle state  */
 	  }
 	// Restart timer to continue working on data until user-app suspends work
-	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, priv->lg_display.poll_freq));
+	hrtimer_forward_now(&priv->lg_timer, ktime_set(0, 1000U*priv->lg_display.poll_freq));
 	return(HRTIMER_RESTART);
 	break;
       case LGSTATE_GOPULSE:
@@ -975,11 +982,7 @@ static enum hrtimer_restart lg_evt_hdlr(struct hrtimer *timer)
 		   priv->lg_gopulse.xy_curpt.xdata,priv->lg_gopulse.xy_curpt.ydata,
 		   priv->lg_gopulse.xy_curpt.ctrl_flags);
 	    lg_write_io_to_dac(priv, (struct lg_xydata *)&priv->lg_gopulse.xy_curpt);
-	    // Update last just in case user sends get-angle command
-	    priv->lg_lastxy.xdata = priv->lg_gopulse.xy_curpt.xdata;
-	    priv->lg_lastxy.ydata = priv->lg_gopulse.xy_curpt.ydata;
-	    priv->lg_lastxy.ctrl_flags = priv->lg_gopulse.xy_curpt.ctrl_flags;
-	  }
+	   }
 	else
 	  priv->lg_gopulse.counter = 0;
 
