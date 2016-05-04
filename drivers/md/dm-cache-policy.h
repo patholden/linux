@@ -82,6 +82,18 @@ struct policy_locker {
 };
 
 /*
+ * When issuing a POLICY_REPLACE the policy needs to make a callback to
+ * lock the block being demoted.  This doesn't need to occur during a
+ * writeback operation since the block remains in the cache.
+ */
+struct policy_locker;
+typedef int (*policy_lock_fn)(struct policy_locker *l, dm_oblock_t oblock);
+
+struct policy_locker {
+	policy_lock_fn fn;
+};
+
+/*
  * This is the instruction passed back to the core target.
  */
 struct policy_result {

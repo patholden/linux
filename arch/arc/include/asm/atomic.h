@@ -28,6 +28,12 @@ static inline void atomic_##op(int i, atomic_t *v)			\
 {									\
 	unsigned int temp;						\
 									\
+	/*								\
+	 * Explicit full memory barrier needed before/after as		\
+	 * LLOCK/SCOND thmeselves don't provide any such semantics	\
+	 */								\
+	smp_mb();							\
+									\
 	__asm__ __volatile__(						\
 	"1:	llock   %0, [%1]	\n"				\
 	"	" #asm_op " %0, %0, %2	\n"				\
@@ -57,6 +63,8 @@ static inline int atomic_##op##_return(int i, atomic_t *v)		\
 	: "=&r"(temp)							\
 	: "r"(&v->counter), "ir"(i)					\
 	: "cc");							\
+									\
+	smp_mb();							\
 									\
 	smp_mb();							\
 									\
@@ -102,6 +110,9 @@ static inline void atomic_##op(int i, atomic_t *v)			\
 {									\
 	unsigned long flags;						\
 									\
+	/*								\
+	 * spin lock/unlock provides the needed smp_mb() before/after	\
+	 */								\
 	atomic_ops_lock(flags);						\
 	v->counter c_op i;						\
 	atomic_ops_unlock(flags);					\
